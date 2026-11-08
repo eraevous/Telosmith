@@ -74,11 +74,16 @@ class Store:
 
     @classmethod
     def load(cls, path: str | Path) -> Store:
+        return cls.from_text(Path(path).read_bytes().decode("utf-8"))
+
+    @classmethod
+    def from_text(cls, text: str) -> Store:
+        """Parse JSON lines without filesystem writes or newline normalization."""
         recs, problems = [], []
         first: dict[str, tuple[int, str]] = {}  # id@version -> (line number, unnormalized text) of its first line
         # Split on LF only and keep each line as written (a CR before the LF included): spec 006's
         # duplicate test compares these unnormalized lines, so whitespace or CRLF differences stay `unique`.
-        for n, written in enumerate(Path(path).read_bytes().decode("utf-8").split("\n"), 1):
+        for n, written in enumerate(text.split("\n"), 1):
             line = written.strip()
             if not line or line.startswith("//"):
                 continue
