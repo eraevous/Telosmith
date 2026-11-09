@@ -60,17 +60,15 @@ def build(records: Path, record: dict, anchors: list[str], rationale_anchors: li
         record = dict(record)
         record["anchors"] = list(record.get("anchors", [])) + made
     line = json.dumps(record, ensure_ascii=False)
-    store = Store.load(records)
+    line.encode("utf-8")  # Reject unencodable records before any ledger write.
+    text = records.read_bytes().decode("utf-8")
+    store = Store.from_text(text)
     ref = f"{record.get('id')}@{record.get('version')}"
     if ref in store.by_ref:
         return line, [f"{ref} already exists in {records}: append the next version instead"]
-    trial = records.with_name(records.name + ".append-check")
-    try:
-        text = records.read_text(encoding="utf-8")
-        trial.write_text(text + ("" if text.endswith("\n") or not text else "\n") + line + "\n", encoding="utf-8")
-        new_store = Store.load(trial)
-    finally:
-        trial.unlink(missing_ok=True)
+    # Validate in memory: a predictable sibling scratch file can clobber unrelated data
+    # (including through a symlink), even for --dry-run. Keep the original bytes/newlines.
+    new_store = Store.from_text(text + ("" if text.endswith("\n") or not text else "\n") + line + "\n")
     before = {(f.rule, f.ref, f.msg) for f in check(store, sources=context) if f.level == "error"}
     problems = [f"{f.rule}: {f.ref}: {f.msg}" for f in check(new_store, sources=context)
                 if f.level == "error" and (f.rule, f.ref, f.msg) not in before]
