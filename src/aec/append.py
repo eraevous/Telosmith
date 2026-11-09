@@ -60,6 +60,7 @@ def build(records: Path, record: dict, anchors: list[str], rationale_anchors: li
         record = dict(record)
         record["anchors"] = list(record.get("anchors", [])) + made
     line = json.dumps(record, ensure_ascii=False)
+    line.encode("utf-8")  # Reject unencodable records before any ledger write.
     text = records.read_bytes().decode("utf-8")
     store = Store.from_text(text)
     ref = f"{record.get('id')}@{record.get('version')}"
