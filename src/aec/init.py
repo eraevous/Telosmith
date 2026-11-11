@@ -41,16 +41,22 @@ remaining evidence is good enough. That stays a review question.
 # (stderr, exit 2) when linked code changed or reaches a change. Quiet when nothing linked moved. HEAD's snapshot
 # goes to its own git-ignored file so a baseline the user keeps in `.aec/before.jsonl` is never overwritten.
 # An installed `aec` too old for this (no `--exit-code`) is reported to the user (exit 1, non-blocking).
+# Every aec call runs as `python3 -P` (Python 3.11+): the hook has just cd'ed into the checkout, and
+# without -P Python would import an aec.py or aec/ placed there by the branch before the installed
+# Telosmith (Codex security review on eraevous/crank-mem-eval#7). Older Pythons are refused, not
+# run unprotected.
 HOOK_COMMAND = (
     "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; "
-    "python3 -m aec code-impact --help 2>/dev/null | grep -q -- --exit-code || "
+    "python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || "
+    "{ echo 'Telosmith hook: needs Python 3.11+ (python3 -P keeps the checkout off the import path)' >&2; exit 1; }; "
+    "python3 -P -m aec code-impact --help 2>/dev/null | grep -q -- --exit-code || "
     "{ echo 'Telosmith hook: the installed aec has no code-impact --exit-code; install Telosmith v0.5.0 or later "
     "(the commit your CI job pins)' >&2; exit 1; }; "
-    "python3 -m aec edges . -o .aec/edges.jsonl 2>/dev/null; "
-    "python3 -m aec check .aec/records.jsonl --edges .aec/edges.jsonl >/dev/null || "
-    "{ python3 -m aec check .aec/records.jsonl --edges .aec/edges.jsonl 1>&2; exit 2; }; "
-    "python3 -m aec snapshot . --rev HEAD -o .aec/hook-before.jsonl 2>/dev/null || exit 0; "
-    "out=$(python3 -m aec code-impact .aec/records.jsonl .aec/hook-before.jsonl .aec/edges.jsonl --exit-code 2>&1) || "
+    "python3 -P -m aec edges . -o .aec/edges.jsonl 2>/dev/null; "
+    "python3 -P -m aec check .aec/records.jsonl --edges .aec/edges.jsonl >/dev/null || "
+    "{ python3 -P -m aec check .aec/records.jsonl --edges .aec/edges.jsonl 1>&2; exit 2; }; "
+    "python3 -P -m aec snapshot . --rev HEAD -o .aec/hook-before.jsonl 2>/dev/null || exit 0; "
+    "out=$(python3 -P -m aec code-impact .aec/records.jsonl .aec/hook-before.jsonl .aec/edges.jsonl --exit-code 2>&1) || "
     "{ printf '%s\\n' \"$out\" "
     "'(Telosmith: stale/needs_review lines are status changes; structural pointer lines are candidates for "
     "attention and change no status.)' >&2; exit 2; }"
@@ -71,9 +77,9 @@ CI_IMPACT = """base=$(git merge-base "$AEC_BASE" HEAD 2>/dev/null) || base=""
 if [ -z "$base" ]; then
   echo "code-impact skipped: no base revision for this event" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
 fi
-python3 -m aec snapshot . --rev "$base" -o .aec/before.jsonl || {
+python3 -P -m aec snapshot . --rev "$base" -o .aec/before.jsonl || {
   echo "code-impact skipped: could not snapshot $base" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
-report=$(python3 -m aec code-impact .aec/records.jsonl .aec/before.jsonl .aec/edges.jsonl 2>&1) || true
+report=$(python3 -P -m aec code-impact .aec/records.jsonl .aec/before.jsonl .aec/edges.jsonl 2>&1) || true
 printf '%s\\n' "$report"
 { echo "## Telosmith code-impact (structural, report-only) vs $base"; echo '```'
   printf '%s\\n' "$report"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -184,9 +190,9 @@ jobs:
         with: {{ python-version: "3.12" }}
       - run: pip install "{AEC_SOURCE}@{ref}"
       - name: Structural snapshot (regenerated, never trusted from the branch)
-        run: python3 -m aec edges . -o .aec/edges.jsonl
+        run: python3 -P -m aec edges . -o .aec/edges.jsonl
       - name: Records check (fails on errors, including dangling code references)
-        run: python3 -m aec check .aec/records.jsonl --edges .aec/edges.jsonl
+        run: python3 -P -m aec check .aec/records.jsonl --edges .aec/edges.jsonl
       - name: Code impact against the base (report-only; see the job summary)
         env:
           AEC_BASE: ${{{{ github.event.pull_request.base.sha || github.event.before }}}}

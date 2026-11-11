@@ -5,6 +5,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Security
+- The Claude hook and CI snippet from `aec init` now run every `aec` call as `python3 -P -m aec`, and the hook
+  refuses Python older than 3.11. Before, the hook ran `python3 -m aec` after `cd`-ing into the checkout, so a
+  branch adding `aec.py` or `aec/` could run as the developer (found by a Codex security review on
+  eraevous/crank-mem-eval#7). Repositories that copied the old snippet need the new one; `tests/test_hook_safe_path.py`
+  plants a shadow module and checks it never runs.
+
 ### Records
 - Telosmith's own purpose is now `AEC-P0@3` (Kate's wording, anchored to DEC-116); the requirements that served
   `AEC-P0@1` were re-pinned to it, and AGENTS.md names it. Earlier versions stay in the history.
