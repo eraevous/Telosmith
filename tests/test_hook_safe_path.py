@@ -1,24 +1,24 @@
-"""The generated Claude hook and CI snippet never import aec from the checkout.
+"""The generated Claude hook never imports aec from the checkout.
 
-Both run `python3 ... -m aec` with the repository as the current directory. Without `-P`,
-Python would import an `aec.py` or `aec/` package that a branch adds there, ahead of the
-installed Telosmith: on a developer machine that runs the branch's code as the developer
-(Codex security review on eraevous/crank-mem-eval#7), and in CI it could fake a passing
-check. These tests plant such a shadow module and check it never runs.
+The hook cd-s into the repository and then runs aec. Plain `python3 -m aec` would import an
+`aec.py` or `aec/` package that a branch adds there, ahead of the installed Telosmith, and run
+it as the developer (Codex security review on eraevous/crank-mem-eval#7). The hook's `aec`
+shell function drops the checkout from sys.path first, on every supported Python (3.10+).
+CI snippets are out of scope: a pull request can edit the workflow itself, so shadowing adds
+nothing there.
 """
 import json
 import os
 import pathlib
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 
-from aec.init import HOOK_COMMAND, CI_IMPACT
+from aec.init import HOOK_COMMAND
 
 
-@unittest.skipUnless(sys.version_info >= (3, 11) and shutil.which("bash"), "needs Python 3.11+ and bash")
+@unittest.skipUnless(shutil.which("bash"), "needs bash")
 class HookSafePathTests(unittest.TestCase):
     def test_hook_never_imports_a_checkout_aec(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -34,11 +34,19 @@ class HookSafePathTests(unittest.TestCase):
             subprocess.run(["bash", "-c", HOOK_COMMAND], env=env, capture_output=True, timeout=60)
             self.assertFalse(marker.exists(), "the hook imported aec from the checkout")
 
-    def test_every_aec_call_uses_safe_path(self):
-        for name, text in (("HOOK_COMMAND", HOOK_COMMAND), ("CI_IMPACT", CI_IMPACT)):
-            with self.subTest(name):
-                self.assertNotIn("python3 -m aec", text)
-                self.assertIn("python3 -P -m aec", text)
+    def test_no_aec_call_bypasses_the_safe_launcher(self):
+        self.assertNotIn("python3 -m aec", HOOK_COMMAND)
+        self.assertNotIn("python3 -P", HOOK_COMMAND)
+        self.assertIn("runpy.run_module", HOOK_COMMAND)
+
+    def test_hook_still_finds_the_installed_aec(self):
+        src = str(pathlib.Path(__file__).resolve().parents[1] / "src")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, CLAUDE_PROJECT_DIR=tmp, PYTHONPATH=src)
+            launcher = HOOK_COMMAND.split("aec code-impact --help")[0]
+            done = subprocess.run(["bash", "-c", launcher + "aec --version"], env=env,
+                                  capture_output=True, text=True, timeout=60)
+            self.assertEqual(done.returncode, 0, done.stderr)
 
 
 if __name__ == "__main__":

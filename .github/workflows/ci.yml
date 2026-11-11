@@ -32,9 +32,9 @@ jobs:
           if [ -z "$base" ]; then
             echo "code-impact skipped: no base revision for this event" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
           fi
-          python3 -P -m aec snapshot . --rev "$base" -o .aec/before.jsonl || {
+          python3 -m aec snapshot . --rev "$base" -o .aec/before.jsonl || {
             echo "code-impact skipped: could not snapshot $base" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
-          report=$(python3 -P -m aec code-impact .aec/records.jsonl .aec/before.jsonl .aec/edges.jsonl 2>&1) || true
+          report=$(python3 -m aec code-impact .aec/records.jsonl .aec/before.jsonl .aec/edges.jsonl 2>&1) || true
           printf '%s\n' "$report"
           { echo "## Telosmith code-impact (structural, report-only) vs $base"; echo '```'
             printf '%s\n' "$report"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
