@@ -28,6 +28,9 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 - `docs/review-vocabulary.md`: five names reviewers tag findings with (ghost-tool, reflexive-fabrication,
   metaphor-literal-swap, simulated-precision, clean-lie), with no scores, used only on PRs that touch a contract, a
   check or authority.
+- `docs/review-vocabulary.md`: a proposed, not yet adopted, expansion into six hallucination families with
+  cross-cutting patterns, per-finding context fields, a migration table (the five tags keep their names), flagged
+  cases with benign controls, and a prose proposal for evidence at review gates. Scope and cost cap unchanged.
 - Rule 7 in `docs/reasoning-vocabulary.md`: authority does not compose; an authority record that cites another gains
   none of its scope. Already true of `check` and `impact`; `tests/test_no_transitive_authority.py` pins it.
 - `docs/gates.md`: a register of every state transition and pass/fail point (evaluator, threshold, what it
