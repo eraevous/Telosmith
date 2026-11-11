@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "profile": "kairos-v1",
+  "modules": {
+    "repository-tests": {"directory": "tests", "source": "src"},
+    "telosmith": {}
+  }
+}
