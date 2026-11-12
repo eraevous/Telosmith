@@ -4,7 +4,7 @@ Status: **proposed** (draft PR). Direction: DEC-194 (Zach, 2026-11-10: Spec Kit 
 
 The existing extension ([spec-kit.md](spec-kit.md)) runs one direction only: it reports on specs after they are written. This note adds the other direction, records → spec, while keeping Spec Kit optional and keeping authored text out of reach.
 
-## Blocking question for Zach (before merge, not before prototyping)
+## Blocking question for Zach (answered 2026-11-10: option A, DEC-201; amendment merged in #74)
 
 Derivation conflicts with two committed texts:
 
@@ -21,14 +21,14 @@ If accepted, this becomes a constitution amendment (version bump) and `AEC-R1@2`
 
 | Spec Kit artifact / section | Derived from | Prototype |
 |---|---|---|
-| constitution: purpose and invariants | latest committed `purpose` records; committed `requirement` records that directly `serves` one | yes (`block=constitution`) |
-| spec.md: requirements | `requirement` records (latest version), selected by the block's `select=` | yes (`block=requirements`) |
-| spec.md: acceptance | `criterion` records with `tests` → the requirement | yes, nested under each requirement |
+| constitution: purpose and invariants | committed `purpose` records at their baseline; committed `requirement` records that directly `serves` one | yes (`block=constitution`) |
+| spec.md: requirements | `requirement` records at their baseline (below), selected by the block's `select=` | yes (`block=requirements`) |
+| spec.md: acceptance | `criterion` records, once a criterion → requirement relation exists. The vocabulary has none today (`tests` is evaluation → claim), so this needs its own contract work | no |
 | plan.md: constraints | `decision` records (accepted, with `decided_by`) and contracts the requirement `depends_on` | no: designed only |
 | tasks.md: links | `implemented_by` edges (`code:` refs) | partial: listed under each requirement in spec.md; tasks.md not touched |
 | **Stays authored** | title, why/narrative, user stories, edge cases, assumptions, open questions, out of scope, FR wording until it is recorded | never touched |
 
-Selection (`select=` in the fence): `cited` (default) takes requirements the authored text cites by `id@version`; `ids:A,B` names them; `serves:X` takes every requirement serving any version of X. A block always renders the **latest** version; an older citation in the authored text is reported as drift, not silently rewritten.
+Selection (`select=` in the fence): `cited` (default) takes requirements the authored text cites by `id@version`; `ids:A,B` names them; `serves:X` takes every requirement serving any version of X. A block renders each record at its **baseline**: the newest version that is not provisional, or the newest if all are provisional. Newer provisional versions (for example a write-back proposal appended over a committed requirement) are listed under it as *pending*. They do not replace it until promoted, and they don't make a citation of the baseline count as superseded. A citation older than the baseline is reported as drift, not silently rewritten.
 
 ## Derived regions
 
@@ -61,13 +61,13 @@ _Derived from Telosmith records by `telosmith speckit derive`. Change the record
 
 ## Write-back
 
-When a spec edit implies a new or changed record (an `unrecorded-requirement`, or an `edited-block`), drift prints a **provisional** record as JSON: `epistemic: provisional`, `authored_by` from `RELAYKIT_ACTOR` when set, and a `source_note` naming the spec and FR. Nothing is appended. A person or agent reviews it, then runs `telosmith append`. Promotion to `committed` stays Zach's (AGENTS.md: agents append provisional records only). For an edited block the change goes into the records, then `derive` regenerates the block. There is no reverse sync from block text.
+When a spec edit implies a new or changed record (an `unrecorded-requirement`, or an `edited-block`), drift prints a **provisional** record as JSON: `epistemic: provisional`, `authored_by` from `RELAYKIT_ACTOR` when set, and a `source_note` naming the spec and FR. Nothing is appended. A person or agent reviews it, then runs `telosmith append`. Promotion to `committed` stays Zach's (AGENTS.md: agents append provisional records only). For an edited block, recovery takes two steps. First, carry the edit into a provisional record, as above. Second, delete the whole fenced block and run `derive --insert`, which writes a fresh block from the records. Changing the records alone is not enough: the hash mismatch keeps the block skipped until it is removed. There is no reverse sync from block text.
 
 ## Optional by design
 
 - Spec Kit stays optional. `speckit derive/drift` read and write Markdown files; they never call the `specify` CLI. Nothing else in Telosmith imports the module.
 - No other Kairos repository is needed. The trial below used a copy of Fathom's spec and records.
-- The extension manifest is unchanged in the prototype (`effect: read-only` still holds). If the amendment above is accepted, the proposal is a manual command `/speckit-aec-derive` with no hook. A hook that writes would make Spec Kit runs mutate specs as a side effect, which is the competing-authority failure.
+- The extension manifest is unchanged in the prototype (`effect: read-only` still holds), and `derive` stays a CLI command outside the extension. Adding a manual `/speckit-aec-derive` command later is a separate change. It must also update the read-only declarations in `extension/extension.yml` (`effect`, description) and the invariant in `specs/001-ast-bedrock-extension/contracts/extension.yml.md` ("no command writes spec.md…"), with the extension tests. Amending only the constitution and `AEC-R1` would leave those guarantees contradicting it. That command would have no hook. A hook that writes would make Spec Kit runs mutate specs as a side effect, which is the competing-authority failure.
 
 ## Trial: a copy of Fathom spec 027 (read-only; nothing committed to Fathom)
 
