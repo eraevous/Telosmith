@@ -278,11 +278,23 @@ def derive_text(store: Store, text: str, *, insert: str | None = None) -> Derive
     return res
 
 
-def proposal_for(fr: str, line: str, spec: str, actor: str | None) -> dict:
-    """A provisional requirement record a person or agent may append after review. Never appended here."""
+def proposal_for(fr: str, line: str, spec: str, actor: str | None, store: Store | None = None) -> dict | None:
+    """A provisional requirement record a person or agent may append after review. Never appended here.
+
+    Consults the store (Copilot review on #73): if the id already exists with the same text, there is nothing to
+    append (the spec should cite it: returns None); with different text, the proposal is the next version and
+    supersedes the latest, so `aec append` accepts it.
+    """
     slug = re.sub(r"[^A-Za-z0-9]+", "-", Path(spec).parent.name).strip("-").upper() or "SPEC"
-    rec = {"id": f"REQ-{slug}-{fr}", "version": 1, "type": "requirement", "epistemic": "provisional",
-           "text": _one_line(line), "source_note": f"proposed from {spec} {fr} by telosmith speckit drift"}
+    rid, text = f"REQ-{slug}-{fr}", _one_line(line)
+    rec = {"id": rid, "version": 1, "type": "requirement", "epistemic": "provisional",
+           "text": text, "source_note": f"proposed from {spec} {fr} by telosmith speckit drift"}
+    latest = store.latest.get(rid) if store else None
+    if latest is not None:
+        if _one_line(latest.text) == text:
+            return None
+        rec["version"] = latest.version + 1
+        rec["relations"] = [{"rel": "supersedes", "to": latest.ref}]
     if actor:
         rec["authored_by"] = actor
     return rec
@@ -304,9 +316,16 @@ def drift_text(store: Store, text: str, file: str, *, actor: str | None = None) 
                                       f"{c} is cited; the current baseline is {baseline(store, rid).ref}"))
     for m in FR_RE.finditer(authored):
         if not CITE_RE.search(m.group(0)):
-            found.append(DriftFinding("unrecorded-requirement", file, m.group(1),
-                                      f"{m.group(1)} cites no record (id@version); proposed as a provisional record",
-                                      proposal_for(m.group(1), m.group(2), file, actor)))
+            prop = proposal_for(m.group(1), m.group(2), file, actor, store)
+            if prop is None:
+                rid = f"REQ-{re.sub(r'[^A-Za-z0-9]+', '-', Path(file).parent.name).strip('-').upper() or 'SPEC'}"
+                found.append(DriftFinding("unrecorded-requirement", file, m.group(1),
+                                          f"{m.group(1)} cites no record; {rid}-{m.group(1)} already records this text"
+                                          " — cite it in the spec"))
+            else:
+                found.append(DriftFinding("unrecorded-requirement", file, m.group(1),
+                                          f"{m.group(1)} cites no record (id@version); proposed as a provisional record",
+                                          prop))
     for i, b in enumerate(blocks):
         name = f"{b.kind or '?'}#{i + 1}"
         body = text[b.body_start:b.body_end]
@@ -434,11 +453,15 @@ def cmd_derive(a) -> int:
     targets = [(spec, "requirements" if a.insert else None)]
     if a.constitution:
         targets.append((Path(a.constitution), "constitution" if a.insert else None))
-    would_change = False
-    for path, insert in targets:
+    for path, _ in targets:
         if not path.is_file():
             print(f"error: {path} not found")
             return 2
+        if os.path.samefile(path, rec_path):  # aliases, symlinks and hard links included (Copilot review on #73)
+            print(f"error: {path} is the records file; derive writes Markdown and would corrupt it")
+            return 2
+    would_change = False
+    for path, insert in targets:
         old = path.read_bytes().decode("utf-8")
         res = derive_text(store, old, insert=insert)
         for s in res.skipped:

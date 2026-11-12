@@ -236,6 +236,37 @@ class Derive(unittest.TestCase):
         code, out = self.r.run("speckit", "derive", str(self.r.feature), "--insert")
         self.assertEqual(code, 0, out)
 
+    def test_derive_refuses_to_write_the_records_file(self):  # violation (Copilot, #73)
+        rec = self.r.root / ".aec" / "records.jsonl"
+        before = rec.read_bytes()
+        link = self.r.root / "alias.md"
+        link.symlink_to(rec)
+        hard = self.r.root / "hard.md"
+        hard.hardlink_to(rec)
+        for target in (rec, link, hard):
+            code, out = self.r.run("speckit", "derive", str(self.r.feature), "--insert", "--constitution", str(target))
+            self.assertEqual(code, 2, out)
+            self.assertIn("is the records file", out)
+            code, out = self.r.run("speckit", "derive", str(target), "--records", str(rec), "--insert")
+            self.assertEqual(code, 2, out)
+        self.assertEqual(rec.read_bytes(), before)
+        self.assertEqual(self.r.spec.read_text(), SPEC)  # checked before any write
+
+    def test_proposals_never_reuse_an_existing_version(self):  # violation (Copilot, #73)
+        rec = self.r.root / ".aec" / "records.jsonl"
+        store = Store.load(rec)
+        first = next(f.proposal for f in S.drift_text(store, SPEC, str(self.r.spec)) if f.subject == "FR-002")
+        with open(rec, "a", encoding="utf-8") as f:
+            f.write(json.dumps(first) + "\n")
+        store = Store.load(rec)
+        same = [f for f in S.drift_text(store, SPEC, str(self.r.spec)) if f.subject == "FR-002"][0]
+        self.assertIsNone(same.proposal)                               # unchanged text: nothing to append
+        self.assertIn("cite it", same.message)
+        revised = SPEC.replace("Something nobody recorded yet.", "Something revised.")
+        prop = next(f.proposal for f in S.drift_text(store, revised, str(self.r.spec)) if f.subject == "FR-002")
+        self.assertEqual(prop["version"], 2)
+        self.assertEqual(prop["relations"], [{"rel": "supersedes", "to": f"{first['id']}@1"}])
+
     def test_select_variants(self):
         store = Store.load(self.r.root / ".aec" / "records.jsonl")
         self.assertEqual([r.id for r in S.select(store, {"select": "serves:P0"}, "")], ["R-A", "R-B", "R-C"])
