@@ -18,9 +18,7 @@ Subcommands: `print`, `install`, `uninstall`, `verify`, `run` (what the hook cal
 """
 from __future__ import annotations
 
-import base64
 import contextlib
-import hashlib
 import io
 import json
 import os
@@ -34,75 +32,91 @@ DIST = "telosmith"
 REFUSED = 2  # PostToolUse exit 2: stderr goes to the agent and the user sees it; the edit already happened
 
 
+# The integrity check is plain source, not a function of this package, because the hook must run it BEFORE
+# importing anything from the package it checks: a tampered module would otherwise run at import time and could
+# replace the verifier (Codex review on #79). The hook passes this source to `python -I -c`; it imports only the
+# standard library and reads the distribution's metadata, never `aec`. This module execs the same source so
+# `aec hook verify` and the tests use the identical code.
+VERIFY_SRC = r"""
+import base64, hashlib, os, sys
+from importlib import metadata
+
+
 class Refused(Exception):
-    """An integrity check failed; the message says which and why."""
+    pass
 
 
-# --- integrity -----------------------------------------------------------------------------------------------
-
-def _digest(path: Path) -> str:
-    """sha256 in pip RECORD's format: urlsafe base64, no padding."""
-    h = hashlib.sha256(path.read_bytes()).digest()
-    return "sha256=" + base64.urlsafe_b64encode(h).rstrip(b"=").decode()
+def _digest(path):
+    h = hashlib.sha256(open(path, 'rb').read()).digest()
+    return 'sha256=' + base64.urlsafe_b64encode(h).rstrip(b'=').decode()
 
 
-def _distribution():
-    from importlib import metadata
+def _dist():
     try:
-        return metadata.distribution(DIST)
-    except metadata.PackageNotFoundError as exc:
-        raise Refused(f"no installed '{DIST}' distribution in {sys.prefix} (a source checkout can't be verified)") from exc
+        return metadata.distribution('telosmith')
+    except metadata.PackageNotFoundError:
+        raise Refused('no installed telosmith distribution in %s (a source checkout cannot be verified)' % sys.prefix)
 
 
-def record_text(dist=None) -> str:
-    dist = dist or _distribution()
-    text = dist.read_text("RECORD")
+def record_pin(dist=None):
+    text = (dist or _dist()).read_text('RECORD')
     if not text:
-        raise Refused("the installed telosmith has no RECORD file, so its files can't be checked")
-    return text
+        raise Refused('the installed telosmith has no RECORD file, so its files cannot be checked')
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
-def record_pin(dist=None) -> str:
-    """The digest pinned at install time: sha256 of the RECORD file itself."""
-    return hashlib.sha256(record_text(dist).encode()).hexdigest()
-
-
-def verify(pin: str | None = None) -> list[str]:
-    """Check the running `aec`. Returns what was checked; raises Refused on the first failure."""
-    import aec
-    checked = []
-    prefix = Path(sys.prefix).resolve()
-    if Path(sys.prefix) == Path(sys.base_prefix):
-        raise Refused(f"aec is not running from a dedicated environment (sys.prefix {sys.prefix} is the base "
-                      "interpreter); install it with pipx or into its own venv")
-    pkg = Path(aec.__file__).resolve().parent
-    if prefix not in pkg.parents:
-        raise Refused(f"aec was imported from {pkg}, outside its environment {prefix}")
-    checked.append(f"aec imported from inside {prefix}")
-    dist = _distribution()
-    if Path(str(dist.locate_file("aec"))).resolve() != pkg:
-        raise Refused(f"the telosmith distribution's files are not the aec package that is running ({pkg})")
+def verify(pin=None):
+    if os.path.realpath(sys.prefix) == os.path.realpath(sys.base_prefix):
+        raise Refused('aec is not in a dedicated environment (sys.prefix %s is the base interpreter); '
+                      'install it with pipx or into its own venv' % sys.prefix)
+    prefix = os.path.join(os.path.realpath(sys.prefix), '')
+    dist = _dist()
+    pkg = os.path.realpath(str(dist.locate_file('aec')))
+    if not pkg.startswith(prefix):
+        raise Refused('the aec package %s is outside its environment %s' % (pkg, prefix))
+    checked = ['aec package inside ' + prefix]
     listed = {}
     for f in dist.files or ():
-        p = Path(str(dist.locate_file(f))).resolve()
         if f.hash is not None:
-            listed[p] = f"{f.hash.mode}={f.hash.value}"
-    sources = [p for p in pkg.rglob("*") if p.is_file() and "__pycache__" not in p.parts]
-    if not sources:
-        raise Refused(f"no files under {pkg}")
-    for p in sources:
-        want = listed.get(p.resolve())
-        if want is None:
-            raise Refused(f"{p} is not in the installed RECORD (an editable install, or a file added after install)")
-        if _digest(p) != want:
-            raise Refused(f"{p} does not match its RECORD hash (changed after install)")
-    checked.append(f"{len(sources)} package files match RECORD")
+            listed[os.path.realpath(str(dist.locate_file(f)))] = '%s=%s' % (f.hash.mode, f.hash.value)
+    found = 0
+    for root, dirs, files in os.walk(pkg):
+        dirs[:] = sorted(d for d in dirs if d != '__pycache__')
+        for name in sorted(files):
+            path = os.path.realpath(os.path.join(root, name))
+            want = listed.get(path)
+            if want is None:
+                raise Refused('%s is not in the installed RECORD (an editable install, or a file added after install)' % path)
+            if _digest(path) != want:
+                raise Refused('%s does not match its RECORD hash (changed after install)' % path)
+            found += 1
+    if not found:
+        raise Refused('no files under ' + pkg)
+    checked.append('%d package files match RECORD' % found)
     if pin is not None:
         if record_pin(dist) != pin:
-            raise Refused("RECORD changed since the hook was installed (reinstall the hook after upgrading aec: "
-                          "`aec hook install --user`)")
-        checked.append("RECORD matches the digest pinned at install")
+            raise Refused('RECORD changed since the hook was installed (after upgrading aec, reinstall the hook: '
+                          '`aec hook install --user`)')
+        checked.append('RECORD matches the digest pinned at install')
     return checked
+"""
+
+# What the hook runs: verify with VERIFY_SRC, and only then import aec. argv: <pin> <project>.
+BOOTSTRAP_SRC = VERIFY_SRC + r"""
+try:
+    verify(sys.argv[1])
+except Refused as exc:
+    sys.stderr.write('Telosmith hook refused to run: %s\n' % exc)
+    sys.exit(2)
+from aec.__main__ import main
+sys.exit(main(['hook', 'run', '--pin', sys.argv[1], sys.argv[2]]))
+"""
+
+_ns: dict = {"__name__": "aec._verify"}
+exec(compile(VERIFY_SRC, "<aec verify>", "exec"), _ns)  # noqa: S102 - our own constant, see above
+Refused = _ns["Refused"]
+verify = _ns["verify"]
+record_pin = _ns["record_pin"]
 
 
 # --- the hook ------------------------------------------------------------------------------------------------
@@ -111,7 +125,7 @@ def hook_command(python: str, pin: str) -> str:
     """Absolute interpreter, isolated mode, started from /. Quiet in repos without Telosmith records."""
     return (
         'P="$CLAUDE_PROJECT_DIR"; [ -n "$P" ] && [ -f "$P/.aec/records.jsonl" ] || exit 0; '
-        f'cd / && exec {shlex.quote(python)} -I -m aec hook run --pin {shlex.quote(pin)} "$P" {MARKER}'
+        f'cd / && exec {shlex.quote(python)} -I -c {shlex.quote(BOOTSTRAP_SRC)} {shlex.quote(pin)} "$P" {MARKER}'
     )
 
 
@@ -119,9 +133,23 @@ def hook_entry(python: str, pin: str) -> dict:
     return {"matcher": MATCHER, "hooks": [{"type": "command", "command": hook_command(python, pin), "timeout": 30}]}
 
 
-def _ours(entry) -> bool:
-    return isinstance(entry, dict) and any(
-        isinstance(h, dict) and MARKER in str(h.get("command", "")) for h in entry.get("hooks", []) or [])
+def _mine(hook) -> bool:
+    return isinstance(hook, dict) and MARKER in str(hook.get("command", ""))
+
+
+def _without_ours(post: list) -> list:
+    """PostToolUse entries with our command removed. A sibling hook in the same entry keeps its entry and matcher
+    (Codex review on #79); an entry left with no hooks only because ours went is dropped."""
+    out = []
+    for entry in post:
+        hooks = entry.get("hooks") if isinstance(entry, dict) else None
+        if not isinstance(hooks, list) or not any(_mine(h) for h in hooks):
+            out.append(entry)
+            continue
+        rest = [h for h in hooks if not _mine(h)]
+        if rest:
+            out.append({**entry, "hooks": rest})
+    return out
 
 
 def _call(argv: list[str]) -> tuple[int, str]:
@@ -139,7 +167,9 @@ def _call(argv: list[str]) -> tuple[int, str]:
 
 
 def run(project: str, pin: str | None) -> int:
-    """The hook body. Same steps and exit codes as the project-level snippet from `aec init` (Telosmith #77)."""
+    """The hook body. Same steps and exit codes as the project-level snippet from `aec init` (Telosmith #77).
+    The installed hook reaches this only through BOOTSTRAP_SRC, which has already verified the package before
+    importing it; the check repeated here is a convenience for direct calls, not the trust boundary."""
     try:
         verify(pin)
     except Refused as exc:
@@ -199,21 +229,23 @@ def install(path: Path, python: str, pin: str) -> str:
     data = _load(path)
     hooks = data.setdefault("hooks", {})
     post = hooks.setdefault("PostToolUse", [])
-    entry = hook_entry(python, pin)
-    kept = [e for e in post if not _ours(e)]
-    if kept + [entry] == post:
+    kept = _without_ours(post)
+    new = kept + [hook_entry(python, pin)]
+    if new == post:
         return "unchanged"
-    hooks["PostToolUse"] = kept + [entry]
+    hooks["PostToolUse"] = new
     _write(path, data)
-    return "updated" if len(kept) != len(post) else "installed"
+    return "updated" if kept != post else "installed"
 
 
 def uninstall(path: Path) -> str:
     data = _load(path)
     post = data.get("hooks", {}).get("PostToolUse")
-    if not post or not any(_ours(e) for e in post):
+    if not post:
         return "absent"
-    kept = [e for e in post if not _ours(e)]
+    kept = _without_ours(post)
+    if kept == post:
+        return "absent"
     if kept:
         data["hooks"]["PostToolUse"] = kept
     else:

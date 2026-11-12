@@ -51,7 +51,7 @@ DEC-225 CI hook guard, which only applies to PRs, and by the rule of thumb below
 `aec hook install --user` writes one PostToolUse entry (`Edit|Write|MultiEdit`, timeout 30):
 
 ```sh
-P="$CLAUDE_PROJECT_DIR"; [ -n "$P" ] && [ -f "$P/.aec/records.jsonl" ] || exit 0; cd / && exec '/abs/env/bin/python3' -I -m aec hook run --pin <sha256-of-RECORD> "$P" # telosmith-user-hook v1
+P="$CLAUDE_PROJECT_DIR"; [ -n "$P" ] && [ -f "$P/.aec/records.jsonl" ] || exit 0; cd / && exec '/abs/env/bin/python3' -I -c '<bootstrap: verify, then import aec>' <sha256-of-RECORD> "$P" # telosmith-user-hook v1
 ```
 
 - It runs **the interpreter of the environment `aec` was installed into**, by absolute path. It never calls
@@ -65,13 +65,17 @@ P="$CLAUDE_PROJECT_DIR"; [ -n "$P" ] && [ -f "$P/.aec/records.jsonl" ] || exit 0
   the stale edges and exits 1. If a record check fails, it exits 2. If the snapshot fails, it exits 0. If
   code-impact finds something, it exits 2 with the same note. It runs them in-process: one interpreter, no shell
   function, no PYTHONPATH filter.
-- Before any of that, it verifies itself (next section). If verification fails, it exits 2 with
-  `Telosmith hook refused to run: <reason>`, so both the agent and the user see why.
+- **It verifies before it imports.** The bootstrap (`BOOTSTRAP_SRC`) is stdlib-only source passed with `-c`. It
+  reads the distribution's metadata, checks the package files, and only then imports `aec`. Verifying from inside
+  the package would let a tampered module run at import time and replace the verifier (Codex review on #79).
+  If verification fails, the hook exits 2 with `Telosmith hook refused to run: <reason>`, so both the agent and
+  the user see why. `aec hook verify` runs the same check but has already imported the package, so it's a
+  diagnostic, not the boundary.
 
 Install: `aec hook install --user` or `--settings FILE`. Uninstall: `aec hook uninstall --user`. To print the
 JSON without writing anything: `aec hook print`, which is also how to fill a managed-settings file by hand. The
-install is idempotent: it finds its own entry by the `# telosmith-user-hook v1` marker, replaces only that
-entry, leaves every other key and hook alone, and writes atomically. It refuses to install for an `aec` that
+install is idempotent: it finds its own command by the `# telosmith-user-hook v1` marker, replaces only that
+command (a sibling hook in the same entry keeps its entry), leaves every other key and hook alone, and writes atomically. It refuses to install for an `aec` that
 already fails verification. The tests use a temporary settings file. **No one's real settings were changed.**
 
 ## Integrity check: what each layer stops, and what it doesn't
@@ -79,7 +83,7 @@ already fails verification. The tests use a temporary settings file. **No one's 
 | layer | stops | doesn't stop |
 |---|---|---|
 | Dedicated environment (pipx or its own venv), `-I`, `cd /`, absolute interpreter | Shadow modules in the checkout (`aec.py`, `runpy.py`, `site.py` …), `PYTHONPATH`, user site-packages. Tested: a planted package plus `PYTHONPATH=<checkout>` never runs. | Anything already inside the environment. `.pth` files in the environment's own site-packages still run at startup, because `-I` doesn't disable them. The base interpreter's stdlib isn't checked. |
-| Import-location check (`aec` was loaded from inside `sys.prefix`, and that is the `telosmith` distribution's package) | An `aec` picked up from somewhere else; running from a source checkout or the base interpreter (both refused). | Tampering inside the environment. |
+| Location check, done before import (the `telosmith` distribution's `aec` package lies inside `sys.prefix`, and that is a venv rather than the base interpreter) | A package installed somewhere else; running from a source checkout or the base interpreter (both refused). | Tampering inside the environment. |
 | RECORD check (every file under the `aec` package is listed in pip's RECORD and matches its sha256) | Edited or added package files, including an editable install, which is refused because its sources aren't in RECORD. | An attacker who rewrites RECORD too. |
 | Pin (sha256 of RECORD, written into the hook command at install time) | A RECORD rewritten after install. Upgrading means re-running `aec hook install`. | An attacker who can also edit the settings file holding the pin. In `~/.claude/settings.json` that is anyone running as the user. In a root-owned managed file it needs admin rights. |
 | Release attestation (**proposed, not built**) | A tampered install source: you would check the wheel with `gh attestation verify` before pipx installs it. | Needs a Telosmith release workflow with `actions/attest-build-provenance`, which is a workflow change for Zach. It says nothing about what happens to the files after install. |

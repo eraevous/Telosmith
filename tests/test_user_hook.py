@@ -57,6 +57,20 @@ class SettingsEditTests(unittest.TestCase):
         U.uninstall(self.path)
         self.assertEqual(json.loads(self.path.read_text()), {"hooks": {"PostToolUse": [other]}})
 
+    def test_sibling_hooks_in_our_entry_survive(self):
+        U.install(self.path, "/env/bin/python3", "a" * 64)
+        data = json.loads(self.path.read_text())
+        sibling = {"type": "command", "command": "echo unrelated-check"}
+        data["hooks"]["PostToolUse"][0]["hooks"].append(sibling)
+        self.path.write_text(json.dumps(data))
+        self.assertEqual(U.install(self.path, "/env/bin/python3", "b" * 64), "updated")
+        post = json.loads(self.path.read_text())["hooks"]["PostToolUse"]
+        self.assertEqual(post[0], {"matcher": U.MATCHER, "hooks": [sibling]})
+        self.assertIn("b" * 64, post[1]["hooks"][0]["command"])
+        self.assertEqual(U.uninstall(self.path), "removed")
+        self.assertEqual(json.loads(self.path.read_text())["hooks"]["PostToolUse"],
+                         [{"matcher": U.MATCHER, "hooks": [sibling]}])
+
     def test_refuses_a_settings_file_that_is_not_an_object(self):
         self.path.write_text("[]")
         with self.assertRaises(ValueError):
@@ -64,10 +78,13 @@ class SettingsEditTests(unittest.TestCase):
 
     def test_command_shape(self):
         cmd = U.hook_command("/my env/bin/python3", "c" * 64)
-        self.assertIn("'/my env/bin/python3' -I -m aec hook run", cmd)  # absolute, quoted, isolated
-        self.assertLess(cmd.index("cd / && exec"), cmd.index("-I -m aec"))
+        self.assertIn("'/my env/bin/python3' -I -c ", cmd)  # absolute, quoted, isolated
+        self.assertLess(cmd.index("cd / && exec"), cmd.index(" -I -c "))
         self.assertIn('[ -f "$P/.aec/records.jsonl" ] || exit 0', cmd)
-        self.assertNotIn("python3 -m aec", cmd.replace("python3 -I -m aec", ""))
+        self.assertNotIn("-m aec", cmd)  # the package is imported only after the bootstrap verified it
+        boot = U.BOOTSTRAP_SRC
+        self.assertLess(boot.index("verify(sys.argv[1])"), boot.index("from aec"))
+        self.assertNotIn("import aec", U.VERIFY_SRC)
         self.assertTrue(cmd.endswith(U.MARKER))
 
     def test_source_checkout_is_never_verified(self):
@@ -128,17 +145,26 @@ class InstalledHookTests(unittest.TestCase):
             self.assertIn("not in the installed RECORD", out.stderr)
         finally:
             planted.unlink()
-        target = self.pkg() / "graph.py"
+        target = self.pkg() / "impact.py"  # imported by aec.__main__, so it would run before any in-package check
         original = target.read_bytes()
-        target.write_bytes(original + b"\n# tampered\n")
-        try:
-            out = self.aec("hook", "verify")
-            self.assertIn("does not match its RECORD hash", out.stderr)
-            run = self.aec("hook", "run", "--pin", pin, "/")
-            self.assertEqual(run.returncode, U.REFUSED)
-            self.assertIn("refused to run", run.stderr)
-        finally:
-            target.write_bytes(original)
+        with tempfile.TemporaryDirectory() as tmp:
+            ran = pathlib.Path(tmp) / "tampered-ran"
+            target.write_bytes(original + f"\nopen({json.dumps(str(ran))}, 'w').write('ran')\n".encode())
+            try:
+                out = self.aec("hook", "verify")
+                self.assertIn("does not match its RECORD hash", out.stderr)
+                ran.unlink(missing_ok=True)  # `aec hook verify` imports the package; the hook must not
+                project = pathlib.Path(tmp) / "proj"
+                (project / ".aec").mkdir(parents=True)
+                (project / ".aec" / "records.jsonl").write_text("")
+                env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
+                run = subprocess.run(["bash", "-c", U.hook_command(str(self.py), pin)], env=env,
+                                     capture_output=True, text=True, timeout=60)
+                self.assertEqual(run.returncode, U.REFUSED)
+                self.assertIn("refused to run", run.stderr)
+                self.assertFalse(ran.exists(), "tampered package code ran before the integrity check")
+            finally:
+                target.write_bytes(original)
         self.assertEqual(self.aec("hook", "verify", "--pin", pin).returncode, 0)
 
     def test_installed_hook_ignores_a_hostile_checkout(self):
