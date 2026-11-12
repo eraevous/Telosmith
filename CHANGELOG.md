@@ -5,6 +5,19 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Security
+- The Claude hook from `aec init` now starts Python from `/` (`aec() { ( cd / && python3 -m aec "$@" ); }`)
+  and passes the project as absolute paths. Before, it ran `python3 -m aec` after `cd`-ing into the checkout,
+  so a branch adding `aec.py`, `runpy.py` or any module Python imports at startup could run as the developer
+  (found by Codex security reviews on eraevous/crank-mem-eval#7). Works on every supported Python. If
+  refreshing edges fails, the hook now skips the records check instead of using stale edges. Repositories
+  that copied the old hook need the new one; `tests/test_hook_safe_path.py` plants shadow modules and checks
+  none runs.
+- Inside that launcher, PYTHONPATH entries that resolve into the checkout (including through symlinks) are
+  dropped before `aec` starts, so an inherited absolute entry can't bring a branch's `aec.py` back; entries
+  outside the checkout are kept, and relative entries now resolve from `/`. A relative `RELAYKIT_RECORDS` is
+  anchored to the project, as it was when the hook ran there. (Copilot review on #77.)
+
 ### Records
 - Telosmith's own purpose is now `AEC-P0@3` (Kate's wording, anchored to DEC-116); the requirements that served
   `AEC-P0@1` were re-pinned to it, and AGENTS.md names it. Earlier versions stay in the history.

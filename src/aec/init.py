@@ -41,16 +41,42 @@ remaining evidence is good enough. That stays a review question.
 # (stderr, exit 2) when linked code changed or reaches a change. Quiet when nothing linked moved. HEAD's snapshot
 # goes to its own git-ignored file so a baseline the user keeps in `.aec/before.jsonl` is never overwritten.
 # An installed `aec` too old for this (no `--exit-code`) is reported to the user (exit 1, non-blocking).
+# Every aec call goes through the shell function `aec`, which starts Python from `/` and gets the
+# project as absolute paths. Python puts the current directory first on the import path, so starting
+# it inside the checkout (`cd project; python3 -m aec`) would import an aec.py, runpy.py or any other
+# module a branch places there, before the installed Telosmith (Codex security reviews on
+# eraevous/crank-mem-eval#7). Starting from `/` keeps the checkout off the path from interpreter
+# startup on, on every Python version. Two settings the user may have exported are adjusted first, inside
+# the function's subshell only (#77 review): a relative RELAYKIT_RECORDS is anchored to the project (it
+# meant the working directory, which was the project; after `cd /` it would mean /), and PYTHONPATH loses
+# every entry that resolves inside the checkout (an absolute entry there would still import a branch's
+# aec.py). Entries outside the checkout are kept; relative entries now resolve from /, not the checkout.
+# The filter runs in an isolated interpreter (-I: no PYTHONPATH, no user site) that also starts from /.
+HOOK_PATHFILTER = (
+    "import os,sys; p=os.path.join(os.path.realpath(sys.argv[1]),''); "
+    "print(os.pathsep.join(e for e in os.environ.get('PYTHONPATH','').split(os.pathsep) "
+    "if e and not os.path.join(os.path.realpath(e),'').startswith(p)))"
+)
+HOOK_AEC = (
+    "P=\"$CLAUDE_PROJECT_DIR\"; aec() { ( "
+    "r=\"${RELAYKIT_RECORDS#\"${RELAYKIT_RECORDS%%[![:space:]]*}\"}\"; "
+    "case \"$r\" in /*|'') ;; *) export RELAYKIT_RECORDS=\"$P/$r\";; esac; "
+    "cd / && pp=$(python3 -I -c \"" + HOOK_PATHFILTER + "\" \"$P\") || exit 1; "
+    "if [ -n \"$pp\" ]; then export PYTHONPATH=\"$pp\"; else unset PYTHONPATH; fi; "
+    "python3 -m aec \"$@\" ); }; "
+)
 HOOK_COMMAND = (
     "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; "
-    "python3 -m aec code-impact --help 2>/dev/null | grep -q -- --exit-code || "
+    + HOOK_AEC +
+    "aec code-impact --help 2>/dev/null | grep -q -- --exit-code || "
     "{ echo 'Telosmith hook: the installed aec has no code-impact --exit-code; install Telosmith v0.5.0 or later "
     "(the commit your CI job pins)' >&2; exit 1; }; "
-    "python3 -m aec edges . -o .aec/edges.jsonl 2>/dev/null; "
-    "python3 -m aec check .aec/records.jsonl --edges .aec/edges.jsonl >/dev/null || "
-    "{ python3 -m aec check .aec/records.jsonl --edges .aec/edges.jsonl 1>&2; exit 2; }; "
-    "python3 -m aec snapshot . --rev HEAD -o .aec/hook-before.jsonl 2>/dev/null || exit 0; "
-    "out=$(python3 -m aec code-impact .aec/records.jsonl .aec/hook-before.jsonl .aec/edges.jsonl --exit-code 2>&1) || "
+    "aec edges \"$P\" -o \"$P/.aec/edges.jsonl\" 2>/dev/null || "
+    "{ rm -f \"$P/.aec/edges.jsonl\"; echo 'Telosmith hook: could not refresh .aec/edges.jsonl; skipped the records check' >&2; exit 1; }; "
+    "aec check \"$P/.aec/records.jsonl\" --edges \"$P/.aec/edges.jsonl\" >/dev/null || "
+    "{ aec check \"$P/.aec/records.jsonl\" --edges \"$P/.aec/edges.jsonl\" 1>&2; exit 2; }; "
+    "aec snapshot \"$P\" --rev HEAD -o \"$P/.aec/hook-before.jsonl\" 2>/dev/null || exit 0; "
+    "out=$(aec code-impact \"$P/.aec/records.jsonl\" \"$P/.aec/hook-before.jsonl\" \"$P/.aec/edges.jsonl\" --exit-code 2>&1) || "
     "{ printf '%s\\n' \"$out\" "
     "'(Telosmith: stale/needs_review lines are status changes; structural pointer lines are candidates for "
     "attention and change no status.)' >&2; exit 2; }"
