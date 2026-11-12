@@ -117,6 +117,11 @@ project hook runs alongside: that is the gap in the first section.
   managed settings.
 - **Don't check out an unreviewed branch inside a running session.** Hook edits apply live.
 - This still isn't covered:
+  - the project-level hook from `aec init` (#77) still writes `.aec/edges.jsonl` and `.aec/hook-before.jsonl` through
+    whatever the checkout puts at those paths, symlinks included. The user hook here refuses a symlinked
+    `.aec` or records file and writes outputs to a new file, then renames it into place, so a symlink is
+    replaced rather than followed (Codex security review on #79). The project snippet needs the same fix
+    in a follow-up;
   - hooks that run checkout code by design (MtG's `drift_check.py`, Telosmith's own dogfooding hook);
   - Spec Kit extension commands that tell agents to run `python -m aec` from the repository root (C834 step 3);
   - CI workflows, which a PR author controls anyway;

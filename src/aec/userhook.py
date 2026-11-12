@@ -24,6 +24,7 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 MARKER = "# telosmith-user-hook v1"
@@ -179,6 +180,21 @@ def _call(argv: list[str]) -> tuple[int, str]:
     return rc or 0, buf.getvalue()
 
 
+def _produce(argv: list[str], directory: Path, dest: str) -> int:
+    """Run an aec command whose output goes to `-o`, writing a new private file in `directory` and renaming it
+    onto `dest` only on success. Never opens `dest`, so a symlink planted there is replaced, not followed."""
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".hook-", suffix=".tmp")
+    os.close(fd)
+    try:
+        rc = _call(argv + ["-o", tmp])[0]
+        if rc == 0:
+            os.replace(tmp, dest)
+        return rc
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(tmp)
+
+
 def run(project: str, pin: str | None) -> int:
     """The hook body. Same steps and exit codes as the project-level snippet from `aec init` (Telosmith #77).
     The installed hook reaches this only through BOOTSTRAP_SRC, which has already verified the package before
@@ -195,17 +211,29 @@ def run(project: str, pin: str | None) -> int:
     rr = os.environ.get("RELAYKIT_RECORDS", "").strip()
     if rr and not os.path.isabs(rr):
         os.environ["RELAYKIT_RECORDS"] = str(p / rr)  # it meant the project; the hook runs from /
-    rec, edges, before = (str(p / ".aec" / n) for n in ("records.jsonl", "edges.jsonl", "hook-before.jsonl"))
-    if _call(["edges", str(p), "-o", edges])[0] != 0:
+    aec_dir = p / ".aec"
+    rec, edges, before = (str(aec_dir / n) for n in ("records.jsonl", "edges.jsonl", "hook-before.jsonl"))
+    # The checkout controls everything under .aec, including symlinks; writing through one would let a branch
+    # overwrite any file the user owns (Codex security review on #79). Refuse a symlinked .aec or records file,
+    # and write each output to a fresh file inside .aec, then rename it over the destination: a rename replaces
+    # a symlink there instead of following it.
+    for path in (aec_dir, Path(rec)):
+        if path.is_symlink():
+            print(f"Telosmith hook refused to run: {path} is a symlink", file=sys.stderr)
+            return REFUSED
+    if not aec_dir.is_dir() or os.path.realpath(aec_dir) != os.path.join(os.path.realpath(p), ".aec"):
+        print(f"Telosmith hook refused to run: {aec_dir} is not a directory inside the project", file=sys.stderr)
+        return REFUSED
+    if _produce(["edges", str(p)], aec_dir, edges) != 0:
         with contextlib.suppress(OSError):
-            os.remove(edges)
+            os.remove(edges)  # removes a symlink itself, never its target
         print("Telosmith hook: could not refresh .aec/edges.jsonl; skipped the records check", file=sys.stderr)
         return 1
     rc, out = _call(["check", rec, "--edges", edges])
     if rc != 0:
         sys.stderr.write(out)
         return 2
-    if _call(["snapshot", str(p), "--rev", "HEAD", "-o", before])[0] != 0:
+    if _produce(["snapshot", str(p), "--rev", "HEAD"], aec_dir, before) != 0:
         return 0
     rc, out = _call(["code-impact", rec, before, edges, "--exit-code"])
     if rc != 0:

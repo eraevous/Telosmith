@@ -215,6 +215,47 @@ class InstalledHookTests(unittest.TestCase):
             finally:
                 link.unlink()
 
+    def _project(self, tmp):
+        project = pathlib.Path(tmp) / "proj"
+        (project / ".aec").mkdir(parents=True)
+        (project / ".aec" / "records.jsonl").write_text("")
+        subprocess.run(["git", "init", "-q", str(project)], check=True)
+        return project
+
+    def _hook(self, project, pin):
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
+        return subprocess.run(["bash", "-c", U.hook_command(str(self.py), pin)], env=env,
+                              capture_output=True, text=True, timeout=120)
+
+    def test_symlinked_outputs_are_replaced_not_followed(self):
+        pin = self.pin()
+        with tempfile.TemporaryDirectory() as tmp:
+            project = self._project(tmp)
+            victims = []
+            for name in ("edges.jsonl", "hook-before.jsonl"):
+                victim = pathlib.Path(tmp) / f"victim-{name}"
+                victim.write_text("keep me\n")
+                (project / ".aec" / name).symlink_to(victim)
+                victims.append(victim)
+            self._hook(project, pin)
+            for victim in victims:
+                self.assertEqual(victim.read_text(), "keep me\n", "the hook wrote through a symlink")
+            self.assertFalse((project / ".aec" / "edges.jsonl").is_symlink())
+            self.assertTrue((project / ".aec" / "edges.jsonl").is_file())
+            self.assertEqual([p.name for p in (project / ".aec").glob(".hook-*")], [], "temp files left behind")
+
+    def test_symlinked_aec_directory_is_refused(self):
+        pin = self.pin()
+        with tempfile.TemporaryDirectory() as tmp:
+            project = self._project(tmp)
+            elsewhere = pathlib.Path(tmp) / "elsewhere"
+            (project / ".aec").rename(elsewhere)
+            (project / ".aec").symlink_to(elsewhere, target_is_directory=True)
+            run = self._hook(project, pin)
+            self.assertEqual(run.returncode, U.REFUSED, run.stderr)
+            self.assertIn("is a symlink", run.stderr)
+            self.assertFalse((elsewhere / "edges.jsonl").exists())
+
     def test_installed_hook_ignores_a_hostile_checkout(self):
         pin = self.pin()
         with tempfile.TemporaryDirectory() as tmp:
