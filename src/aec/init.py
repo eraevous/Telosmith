@@ -46,8 +46,25 @@ remaining evidence is good enough. That stays a review question.
 # it inside the checkout (`cd project; python3 -m aec`) would import an aec.py, runpy.py or any other
 # module a branch places there, before the installed Telosmith (Codex security reviews on
 # eraevous/crank-mem-eval#7). Starting from `/` keeps the checkout off the path from interpreter
-# startup on, on every Python version. PYTHONPATH is left as the user set it.
-HOOK_AEC = "P=\"$CLAUDE_PROJECT_DIR\"; aec() { ( cd / && python3 -m aec \"$@\" ); }; "
+# startup on, on every Python version. Two settings the user may have exported are adjusted first, inside
+# the function's subshell only (#77 review): a relative RELAYKIT_RECORDS is anchored to the project (it
+# meant the working directory, which was the project; after `cd /` it would mean /), and PYTHONPATH loses
+# every entry that resolves inside the checkout (an absolute entry there would still import a branch's
+# aec.py). Entries outside the checkout are kept; relative entries now resolve from /, not the checkout.
+# The filter runs in an isolated interpreter (-I: no PYTHONPATH, no user site) that also starts from /.
+HOOK_PATHFILTER = (
+    "import os,sys; p=os.path.join(os.path.realpath(sys.argv[1]),''); "
+    "print(os.pathsep.join(e for e in os.environ.get('PYTHONPATH','').split(os.pathsep) "
+    "if e and not os.path.join(os.path.realpath(e),'').startswith(p)))"
+)
+HOOK_AEC = (
+    "P=\"$CLAUDE_PROJECT_DIR\"; aec() { ( "
+    "r=\"${RELAYKIT_RECORDS#\"${RELAYKIT_RECORDS%%[![:space:]]*}\"}\"; "
+    "case \"$r\" in /*|'') ;; *) export RELAYKIT_RECORDS=\"$P/$r\";; esac; "
+    "cd / && pp=$(python3 -I -c \"" + HOOK_PATHFILTER + "\" \"$P\") || exit 1; "
+    "if [ -n \"$pp\" ]; then export PYTHONPATH=\"$pp\"; else unset PYTHONPATH; fi; "
+    "python3 -m aec \"$@\" ); }; "
+)
 HOOK_COMMAND = (
     "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; "
     + HOOK_AEC +

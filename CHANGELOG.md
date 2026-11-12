@@ -13,6 +13,10 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   refreshing edges fails, the hook now skips the records check instead of using stale edges. Repositories
   that copied the old hook need the new one; `tests/test_hook_safe_path.py` plants shadow modules and checks
   none runs.
+- Inside that launcher, PYTHONPATH entries that resolve into the checkout (including through symlinks) are
+  dropped before `aec` starts, so an inherited absolute entry can't bring a branch's `aec.py` back; entries
+  outside the checkout are kept, and relative entries now resolve from `/`. A relative `RELAYKIT_RECORDS` is
+  anchored to the project, as it was when the hook ran there. (Copilot review on #77.)
 
 ### Records
 - Telosmith's own purpose is now `AEC-P0@3` (Kate's wording, anchored to DEC-116); the requirements that served
