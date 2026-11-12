@@ -101,8 +101,26 @@ def citations(text: str) -> list[str]:
     return sorted({f"{m.group(1)}@{m.group(2)}" for m in CITE_RE.finditer(text)})
 
 
-def _latest(store: Store, rid: str) -> Record | None:
-    return store.latest.get(rid)
+def baseline(store: Store, rid: str) -> Record | None:
+    """The version a spec should show: the newest version that is not provisional, else the newest.
+
+    A provisional version appended over a committed one (write-back) is a pending proposal, not a replacement,
+    until it is promoted (Copilot review on #72). Store.latest picks by version number alone, so it is not used.
+    """
+    versions = [r for r in store.records if r.id == rid]
+    if not versions:
+        return None
+    settled = [r for r in versions if r.get("epistemic") != "provisional"]
+    return max(settled or versions, key=lambda r: r.version)
+
+
+def pending(store: Store, r: Record) -> list[Record]:
+    """Provisional versions newer than the baseline r."""
+    return sorted((x for x in store.records if x.id == r.id and x.version > r.version), key=lambda x: x.version)
+
+
+def _baselines(store: Store) -> list[Record]:
+    return [b for b in (baseline(store, rid) for rid in sorted(store.latest)) if b is not None]
 
 
 def _one_line(s: str) -> str:
@@ -122,12 +140,12 @@ def select(store: Store, attrs: dict, authored: str) -> list[Record]:
         ids = {i for i in how[4:].split(",") if i}
     elif how.startswith("serves:"):
         target = how[7:]
-        ids = {r.id for r in store.latest.values()
+        ids = {r.id for r in _baselines(store)
                if any(e.get("rel") == "serves" and str(e.get("to", "")).rpartition("@")[0] == target
                       for e in r.relations)}
     else:
         raise ValueError(f"unknown select={how!r}: use cited, ids:A,B or serves:X")
-    recs = [_latest(store, i) for i in ids]
+    recs = [baseline(store, i) for i in ids]
     return sorted((r for r in recs if r is not None and r.type == "requirement"), key=lambda r: r.id)
 
 
@@ -142,9 +160,10 @@ def render_requirements(store: Store, recs: list[Record]) -> str:
         lines.append("_No requirement records selected._")
     for r in recs:
         lines.append(f"- **{r.ref}** ({_status(r)}): {_one_line(r.text)}")
-        crit = sorted((c for c in store.in_edges(r.ref, "tests") if store.latest.get(c.id) is c), key=lambda c: c.id)
-        for c in crit:
-            lines.append(f"  - Acceptance `{c.ref}`: {_one_line(c.text)}")
+        # Acceptance is not derived: the vocabulary has no criterion -> requirement relation (`tests` is
+        # evaluation -> claim). That link needs its own contract work first (Copilot review on #72).
+        for x in pending(store, r):
+            lines.append(f"  - Pending: `{x.ref}` ({_status(x)}, not accepted): {_one_line(x.text)}")
         impl = sorted(store.out_edges(r, "implemented_by"))
         if impl:
             lines.append("  - Implemented by: " + ", ".join(f"`{x}`" for x in impl))
@@ -154,7 +173,7 @@ def render_requirements(store: Store, recs: list[Record]) -> str:
 def render_constitution(store: Store) -> str:
     """Committed purposes (latest versions) and the committed requirements that directly serve them."""
     lines = ["_Derived from Telosmith records by `telosmith speckit derive`. Change the records, not this block._", ""]
-    purposes = sorted((r for r in store.latest.values() if r.type == "purpose" and _status(r) == "committed"),
+    purposes = sorted((r for r in _baselines(store) if r.type == "purpose" and _status(r) == "committed"),
                       key=lambda r: r.id)
     if not purposes:
         lines.append("_No committed purpose records._")
@@ -162,7 +181,7 @@ def render_constitution(store: Store) -> str:
         lines.append(f"### {p.ref}")
         lines.append("")
         lines.append(_one_line(p.text))
-        inv = sorted((r for r in store.latest.values() if r.type == "requirement" and _status(r) == "committed"
+        inv = sorted((r for r in _baselines(store) if r.type == "requirement" and _status(r) == "committed"
                       and any(e.get("rel") == "serves" and str(e.get("to", "")).rpartition("@")[0] == p.id
                               for e in r.relations)), key=lambda r: r.id)
         if inv:
@@ -270,9 +289,9 @@ def drift_text(store: Store, text: str, file: str, *, actor: str | None = None) 
         rid, _, v = c.rpartition("@")
         if c not in store.by_ref:
             found.append(DriftFinding("unresolved-citation", file, c, f"{c} is cited but no such record version exists"))
-        elif store.latest[rid].version > int(v):
+        elif baseline(store, rid).version > int(v):
             found.append(DriftFinding("superseded-citation", file, c,
-                                      f"{c} is cited; the latest is {store.latest[rid].ref}"))
+                                      f"{c} is cited; the current baseline is {baseline(store, rid).ref}"))
     for m in FR_RE.finditer(authored):
         if not CITE_RE.search(m.group(0)):
             found.append(DriftFinding("unrecorded-requirement", file, m.group(1),
@@ -319,7 +338,7 @@ def uncovered(store: Store, texts: list[str], *, all_requirements: bool = False)
     """
     ids = covered_ids(store, texts)
     out = []
-    for r in store.latest.values():
+    for r in _baselines(store):
         if r.type != "requirement" or _status(r) != "committed" or r.id in ids:
             continue
         serves = {str(e.get("to", "")).rpartition("@")[0] for e in r.relations if e.get("rel") == "serves"}

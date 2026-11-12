@@ -84,7 +84,7 @@ class Derive(unittest.TestCase):
                          "- **FR-002**: Something nobody recorded yet.", "Serves: P0@2, R-A@1."):
             self.assertIn(authored, text)
         self.assertIn("- **R-A@1** (committed): Label structural checks", text)
-        self.assertIn("Acceptance `CR-A@1`: Every report says structural", text)
+        self.assertNotIn("CR-A", text)  # no criterion -> requirement relation exists yet; acceptance is not derived
         self.assertIn("Implemented by: `code:pkg.check`", text)
         self.assertNotIn("R-B@1", text)  # select=cited: R-B is not cited
         # the block sits right under the Requirements heading
@@ -130,6 +130,34 @@ class Derive(unittest.TestCase):
         res = S.derive_text(Store.load(self.r.root / ".aec" / "records.jsonl"), text)
         self.assertEqual(res.skipped, [])
         self.assertEqual(res.text, text)
+
+    def test_provisional_version_does_not_displace_committed_baseline(self):  # violation (Copilot, #72)
+        self.r.run("speckit", "derive", str(self.r.feature), "--insert")
+        with open(self.r.root / ".aec" / "records.jsonl", "a", encoding="utf-8") as f:
+            for rid in ("R-A", "R-B"):
+                f.write(json.dumps({"id": rid, "version": 2, "type": "requirement", "epistemic": "provisional",
+                                    "text": "Proposed rewording", "relations": [{"rel": "serves", "to": "P0@2"}]})
+                        + "\n")
+        self.r.run("speckit", "derive", str(self.r.feature))
+        text = self.r.spec.read_text()
+        self.assertIn("- **R-A@1** (committed): Label structural checks", text)
+        self.assertIn("Pending: `R-A@2` (provisional, not accepted): Proposed rewording", text)
+        self.assertNotIn("**R-A@2**", text)
+        store = Store.load(self.r.root / ".aec" / "records.jsonl")
+        kinds = {(f.kind, f.subject) for f in S.drift_text(store, text, "spec.md")}
+        self.assertNotIn(("superseded-citation", "R-A@1"), kinds)   # a proposal does not supersede the baseline
+        self.assertIn("- **R-B@1**: Never edit records", S.render_constitution(store))
+        self.assertEqual({r.ref for r in S.uncovered(store, [text])}, {"R-B@1"})
+
+    def test_edited_block_recovery_by_reinserting(self):  # the documented recovery path
+        self.r.run("speckit", "derive", str(self.r.feature), "--insert")
+        text = self.r.spec.read_text().replace("Label structural checks", "edited")
+        blocks, _ = S.find_blocks(text)
+        b = blocks[0]
+        self.r.spec.write_text(text[:b.start] + text[b.end:])       # delete the whole fenced block
+        code, out = self.r.run("speckit", "derive", str(self.r.feature), "--insert")
+        self.assertEqual(code, 0, out)
+        self.assertIn("- **R-A@1** (committed): Label structural checks", self.r.spec.read_text())
 
     def test_select_variants(self):
         store = Store.load(self.r.root / ".aec" / "records.jsonl")
