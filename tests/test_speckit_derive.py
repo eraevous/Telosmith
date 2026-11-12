@@ -159,6 +159,19 @@ class Derive(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("- **R-A@1** (committed): Label structural checks", self.r.spec.read_text())
 
+    def test_marker_in_record_text_does_not_close_the_block(self):  # violation (Codex review on #73)
+        with open(self.r.root / ".aec" / "records.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "R-A", "version": 2, "type": "requirement", "epistemic": "committed",
+                                "text": "Recognize the marker `<!-- telosmith:end -->` in documents.",
+                                "relations": []}) + "\n")
+        self.r.run("speckit", "derive", str(self.r.feature), "--insert")
+        once = self.r.spec.read_bytes()
+        code, out = self.r.run("speckit", "derive", str(self.r.feature))
+        self.assertNotIn("edited by hand", out)
+        self.assertEqual(self.r.spec.read_bytes(), once)
+        store = Store.load(self.r.root / ".aec" / "records.jsonl")
+        self.assertFalse([f for f in S.drift_text(store, once.decode(), "spec.md") if f.kind == "edited-block"])
+
     def test_select_variants(self):
         store = Store.load(self.r.root / ".aec" / "records.jsonl")
         self.assertEqual([r.id for r in S.select(store, {"select": "serves:P0"}, "")], ["R-A", "R-B", "R-C"])

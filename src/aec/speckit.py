@@ -30,6 +30,7 @@ from .records import Record, Store
 
 OPEN_RE = re.compile(r"^<!-- telosmith:derived (?P<attrs>[^>]*?)\s*-->[ \t\r]*$", re.M)
 END = "<!-- telosmith:end -->"
+END_RE = re.compile(r"^<!-- telosmith:end -->[ \t\r]*$", re.M)  # a standalone line, never an inline mention
 ATTR_RE = re.compile(r"(\w+)=(\S+)")
 # id@version citation. Ids start with an uppercase letter (P0, AEC-R2, DG-RA); code: refs are unversioned.
 CITE_RE = re.compile(r"(?<![\w@.])([A-Z][A-Za-z0-9_.-]*?)@(\d+)(?!\w|\.\d)")
@@ -79,7 +80,8 @@ def find_blocks(text: str) -> tuple[list[Block], list[str]]:
         if not m:
             return blocks, problems
         body_start = m.end() + 1 if text[m.end():m.end() + 1] == "\n" else m.end()
-        end_at = text.find(END, body_start)
+        e = END_RE.search(text, body_start)
+        end_at = e.start() if e else -1
         if end_at < 0:
             problems.append(f"opening fence at offset {m.start()} has no `{END}`; ignored")
             return blocks, problems
@@ -124,7 +126,9 @@ def _baselines(store: Store) -> list[Record]:
 
 
 def _one_line(s: str) -> str:
-    return " ".join(s.split())
+    """Record text on one line, with fence markers defused so record text can never open or close a block
+    (Codex review on #73)."""
+    return " ".join(s.split()).replace("<!-- telosmith:", "&lt;!-- telosmith:")
 
 
 def select(store: Store, attrs: dict, authored: str) -> list[Record]:
