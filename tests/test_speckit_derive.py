@@ -197,6 +197,45 @@ class Derive(unittest.TestCase):
         code, out = self.r.run("speckit", "drift", str(self.r.feature))
         self.assertEqual(code, 2)
 
+    def test_constitution_shows_pending_proposals_and_drift_sees_them(self):  # violation (Copilot, #73)
+        con = self.r.root / "constitution.md"
+        con.write_text("# Constitution\n")
+        self.r.run("speckit", "derive", str(self.r.feature), "--constitution", str(con), "--insert")
+        with open(self.r.root / ".aec" / "records.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "P0", "version": 3, "type": "purpose", "epistemic": "provisional",
+                                "text": "Proposed purpose"}) + "\n")
+            f.write(json.dumps({"id": "R-B", "version": 2, "type": "requirement", "epistemic": "provisional",
+                                "text": "Proposed invariant", "relations": [{"rel": "serves", "to": "P0@2"}]}) + "\n")
+        store = Store.load(self.r.root / ".aec" / "records.jsonl")
+        kinds = {f.kind for f in S.drift_text(store, con.read_text(), "constitution.md")}
+        self.assertIn("stale-block", kinds)
+        self.r.run("speckit", "derive", str(self.r.feature), "--constitution", str(con))
+        text = con.read_text()
+        self.assertIn("### P0@2", text)                                   # baseline kept
+        self.assertIn("Pending: `P0@3` (provisional, not accepted): Proposed purpose", text)
+        self.assertIn("- **R-B@1**: Never edit records", text)
+        self.assertIn("Pending: `R-B@2` (provisional, not accepted): Proposed invariant", text)
+        self.assertNotIn("**R-B@2**", text)
+
+    def test_conflicting_duplicate_ref_stops_both_commands(self):  # violation (Copilot, #73)
+        with open(self.r.root / ".aec" / "records.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "R-A", "version": 1, "type": "requirement", "epistemic": "committed",
+                                "text": "A different R-A@1"}) + "\n")
+        before = self.r.spec.read_bytes()
+        code, out = self.r.run("speckit", "derive", str(self.r.feature), "--insert")
+        self.assertEqual(code, 2)
+        self.assertIn("R-A@1", out)
+        self.assertEqual(self.r.spec.read_bytes(), before)
+        code, _ = self.r.run("speckit", "drift", str(self.r.feature))
+        self.assertEqual(code, 2)
+
+    def test_identical_duplicate_line_is_accepted(self):  # decoy: the loader coalesces exact copies
+        line = (self.r.root / ".aec" / "records.jsonl").read_text().splitlines()[3]
+        with open(self.r.root / ".aec" / "records.jsonl", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        code, out = self.r.run("speckit", "derive", str(self.r.feature), "--insert")
+        self.assertEqual(code, 0, out)
+
     def test_select_variants(self):
         store = Store.load(self.r.root / ".aec" / "records.jsonl")
         self.assertEqual([r.id for r in S.select(store, {"select": "serves:P0"}, "")], ["R-A", "R-B", "R-C"])

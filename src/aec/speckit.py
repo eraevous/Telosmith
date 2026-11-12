@@ -26,7 +26,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .records import Record, Store
+from .records import Finding, Record, Store
 
 OPEN_RE = re.compile(r"^<!-- telosmith:derived (?P<attrs>[^>]*?)\s*-->[ \t\r]*$", re.M)
 END = "<!-- telosmith:end -->"
@@ -185,12 +185,18 @@ def render_constitution(store: Store) -> str:
         lines.append(f"### {p.ref}")
         lines.append("")
         lines.append(_one_line(p.text))
+        for x in pending(store, p):  # proposals stay visible, never as the purpose itself (Copilot review on #73)
+            lines.append("")
+            lines.append(f"_Pending: `{x.ref}` ({_status(x)}, not accepted): {_one_line(x.text)}_")
         inv = sorted((r for r in _baselines(store) if r.type == "requirement" and _status(r) == "committed"
                       and any(e.get("rel") == "serves" and str(e.get("to", "")).rpartition("@")[0] == p.id
                               for e in r.relations)), key=lambda r: r.id)
         if inv:
             lines.append("")
-            lines.extend(f"- **{r.ref}**: {_one_line(r.text)}" for r in inv)
+            for r in inv:
+                lines.append(f"- **{r.ref}**: {_one_line(r.text)}")
+                lines.extend(f"  - Pending: `{x.ref}` ({_status(x)}, not accepted): {_one_line(x.text)}"
+                             for x in pending(store, r))
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -397,6 +403,13 @@ def _load(rec_path: Path) -> Store | None:
     silently vanish from derived blocks or make drift look clean."""
     store = Store.load(rec_path)
     errors = [p for p in store.problems if p.level == "error"]
+    # Two different lines claiming one id@version: by_ref keeps one of them, so derive and drift could disagree
+    # about which text a ref means (Copilot review on #73). Byte-identical copies were already coalesced on load.
+    seen: dict[str, int] = {}
+    for r in store.records:
+        seen[r.ref] = seen.get(r.ref, 0) + 1
+    errors += [Finding("error", "unique", ref, "defined more than once with different content")
+               for ref, n in sorted(seen.items()) if n > 1]
     for p in errors:
         print(f"error: {rec_path}: {p.ref}: {p.msg}")
     if errors:
