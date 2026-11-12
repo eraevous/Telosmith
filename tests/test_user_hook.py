@@ -256,6 +256,28 @@ class InstalledHookTests(unittest.TestCase):
             self.assertIn("is a symlink", run.stderr)
             self.assertFalse((elsewhere / "edges.jsonl").exists())
 
+    def test_deleted_package_file_and_shadow_module_are_refused(self):
+        pin = self.pin()
+        init = self.pkg() / "__init__.py"
+        original = init.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            ran = pathlib.Path(tmp) / "shadow-ran"
+            shadow = self.pkg().parent / "aec.py"  # site-packages, outside the walked package directory
+            shadow.write_text(f"open({json.dumps(str(ran))}, 'w').write('ran')\n")
+            init.unlink()
+            try:
+                run = self._hook(self._project(tmp), pin)
+                self.assertEqual(run.returncode, U.REFUSED, run.stderr)
+                self.assertIn("missing", run.stderr)
+                self.assertFalse(ran.exists(), "a module outside the package ran in its place")
+                init.write_bytes(original)
+                # With the package intact, the package directory wins over a same-named module beside it.
+                self._hook(self._project(tmp + "/b"), pin)
+                self.assertFalse(ran.exists())
+            finally:
+                init.write_bytes(original)
+                shadow.unlink(missing_ok=True)
+
     def test_installed_hook_ignores_a_hostile_checkout(self):
         pin = self.pin()
         with tempfile.TemporaryDirectory() as tmp:

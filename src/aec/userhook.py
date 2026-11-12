@@ -39,7 +39,7 @@ REFUSED = 2  # PostToolUse exit 2: stderr goes to the agent and the user sees it
 # standard library and reads the distribution's metadata, never `aec`. This module execs the same source so
 # `aec hook verify` and the tests use the identical code.
 VERIFY_SRC = r"""
-import base64, hashlib, os, sys
+import base64, csv, hashlib, os, sys
 from importlib import metadata
 
 
@@ -59,11 +59,15 @@ def _dist():
         raise Refused('no installed telosmith distribution in %s (a source checkout cannot be verified)' % sys.prefix)
 
 
-def record_pin(dist=None):
+def record_text(dist=None):
     text = (dist or _dist()).read_text('RECORD')
     if not text:
         raise Refused('the installed telosmith has no RECORD file, so its files cannot be checked')
-    return hashlib.sha256(text.encode()).hexdigest()
+    return text
+
+
+def record_pin(dist=None):
+    return hashlib.sha256(record_text(dist).encode()).hexdigest()
 
 
 def verify(pin=None):
@@ -76,11 +80,14 @@ def verify(pin=None):
     if not pkg.startswith(prefix):
         raise Refused('the aec package %s is outside its environment %s' % (pkg, prefix))
     checked = ['aec package inside ' + prefix]
+    # Read RECORD directly: Distribution.files silently drops entries whose file no longer exists, which would
+    # hide a deleted package file from the missing-file check below.
     listed = {}
-    for f in dist.files or ():
-        if f.hash is not None:
-            listed[os.path.realpath(str(dist.locate_file(f)))] = '%s=%s' % (f.hash.mode, f.hash.value)
+    for row in csv.reader(record_text(dist).splitlines()):
+        if len(row) >= 2 and row[1]:
+            listed[os.path.realpath(str(dist.locate_file(row[0])))] = row[1]
     found = 0
+    seen = set()
     for root, dirs, files in os.walk(pkg):
         # os.walk does not descend into a symlinked directory, but import does (a package beats a same-named
         # module), so any symlink in the tree is refused outright (Codex review on #79).
@@ -97,9 +104,23 @@ def verify(pin=None):
             if _digest(path) != want:
                 raise Refused('%s does not match its RECORD hash (changed after install)' % path)
             found += 1
+            seen.add(path)
     if not found:
         raise Refused('no files under ' + pkg)
-    checked.append('%d package files match RECORD' % found)
+    # Every hashed RECORD file inside the package must still exist: a deleted aec/__init__.py would let an
+    # aec.py elsewhere on sys.path load instead (Codex security review on #79).
+    missing = sorted(p for p in listed if p.startswith(os.path.join(pkg, '')) and p not in seen)
+    if missing:
+        raise Refused('%s is listed in RECORD but missing (removed after install)' % missing[0])
+    # And the top-level import must resolve to this package's __init__.py, not a module that shadows it on sys.path.
+    # find_spec locates the top-level module without running it.
+    import importlib.util
+    spec = importlib.util.find_spec('aec')
+    want_init = os.path.join(pkg, '__init__.py')
+    if spec is None or not spec.origin or os.path.realpath(spec.origin) != want_init:
+        raise Refused('the aec import would load %s, not the verified %s'
+                      % (spec.origin if spec else 'nothing', want_init))
+    checked.append('%d package files match RECORD; the aec import resolves to it' % found)
     if pin is not None:
         if record_pin(dist) != pin:
             raise Refused('RECORD changed since the hook was installed (after upgrading aec, reinstall the hook: '
