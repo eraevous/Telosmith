@@ -193,6 +193,28 @@ class InstalledHookTests(unittest.TestCase):
             finally:
                 pyc.write_bytes(original)
 
+    def test_symlinked_directory_in_package_is_refused(self):
+        pin = self.pin()
+        with tempfile.TemporaryDirectory() as tmp:
+            ran = pathlib.Path(tmp) / "symlink-ran"
+            payload = pathlib.Path(tmp) / "payload"
+            payload.mkdir()
+            (payload / "__init__.py").write_text(f"open({json.dumps(str(ran))}, 'w').write('ran')\n")
+            link = self.pkg() / "impact"  # a package beats the verified impact.py at import time
+            link.symlink_to(payload, target_is_directory=True)
+            try:
+                project = pathlib.Path(tmp) / "proj"
+                (project / ".aec").mkdir(parents=True)
+                (project / ".aec" / "records.jsonl").write_text("")
+                env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
+                run = subprocess.run(["bash", "-c", U.hook_command(str(self.py), pin)], env=env,
+                                     capture_output=True, text=True, timeout=60)
+                self.assertEqual(run.returncode, U.REFUSED, run.stderr)
+                self.assertIn("is a symlink", run.stderr)
+                self.assertFalse(ran.exists(), "code behind a symlinked directory ran")
+            finally:
+                link.unlink()
+
     def test_installed_hook_ignores_a_hostile_checkout(self):
         pin = self.pin()
         with tempfile.TemporaryDirectory() as tmp:

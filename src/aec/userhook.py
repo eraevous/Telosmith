@@ -81,6 +81,12 @@ def verify(pin=None):
             listed[os.path.realpath(str(dist.locate_file(f)))] = '%s=%s' % (f.hash.mode, f.hash.value)
     found = 0
     for root, dirs, files in os.walk(pkg):
+        # os.walk does not descend into a symlinked directory, but import does (a package beats a same-named
+        # module), so any symlink in the tree is refused outright (Codex review on #79).
+        for name in dirs + files:
+            if os.path.islink(os.path.join(root, name)):
+                raise Refused('%s is a symlink; the installed package must contain only regular files'
+                              % os.path.join(root, name))
         dirs[:] = sorted(d for d in dirs if d != '__pycache__')
         for name in sorted(files):
             path = os.path.realpath(os.path.join(root, name))
