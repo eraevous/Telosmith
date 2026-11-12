@@ -6,11 +6,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 ## [Unreleased]
 
 ### Security
-- The Claude hook from `aec init` now runs every `aec` call through a small shell function that drops the
-  checkout from `sys.path` first. Before, it ran `python3 -m aec` after `cd`-ing into the checkout, so a branch
-  adding `aec.py` or `aec/` could run as the developer (found by a Codex security review on
-  eraevous/crank-mem-eval#7). Works on Python 3.10+. Repositories that copied the old hook need the new one;
-  `tests/test_hook_safe_path.py` plants a shadow module and checks it never runs.
+- The Claude hook from `aec init` now starts Python from `/` (`aec() { ( cd / && python3 -m aec "$@" ); }`)
+  and passes the project as absolute paths. Before, it ran `python3 -m aec` after `cd`-ing into the checkout,
+  so a branch adding `aec.py`, `runpy.py` or any module Python imports at startup could run as the developer
+  (found by Codex security reviews on eraevous/crank-mem-eval#7). Works on every supported Python. If
+  refreshing edges fails, the hook now skips the records check instead of using stale edges. Repositories
+  that copied the old hook need the new one; `tests/test_hook_safe_path.py` plants shadow modules and checks
+  none runs.
 
 ### Records
 - Telosmith's own purpose is now `AEC-P0@3` (Kate's wording, anchored to DEC-116); the requirements that served
