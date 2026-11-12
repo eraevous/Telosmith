@@ -108,6 +108,13 @@ try:
 except Refused as exc:
     sys.stderr.write('Telosmith hook refused to run: %s\n' % exc)
     sys.exit(2)
+# Run the verified source, never cached bytecode: a .pyc in the package's __pycache__ is not in RECORD, and
+# Python would load it whenever its header matches the unchanged source (Codex review on #79). With a private,
+# empty pycache_prefix nothing is read from __pycache__, and nothing is written.
+import atexit, tempfile
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp(prefix='telosmith-nocache-')
+atexit.register(os.rmdir, sys.pycache_prefix)
 from aec.__main__ import main
 sys.exit(main(['hook', 'run', '--pin', sys.argv[1], sys.argv[2]]))
 """

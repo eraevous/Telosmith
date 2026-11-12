@@ -167,6 +167,32 @@ class InstalledHookTests(unittest.TestCase):
                 target.write_bytes(original)
         self.assertEqual(self.aec("hook", "verify", "--pin", pin).returncode, 0)
 
+    def test_tampered_bytecode_cache_never_runs(self):
+        """A .pyc whose header still matches the unchanged source would be loaded instead of the source."""
+        import importlib.util
+        import marshal
+        pin = self.pin()  # imports the package, so impact.py's cache exists
+        source = self.pkg() / "impact.py"
+        pyc = pathlib.Path(importlib.util.cache_from_source(str(source)))
+        self.assertTrue(pyc.exists(), "expected a bytecode cache to tamper with")
+        original = pyc.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            ran = pathlib.Path(tmp) / "pyc-ran"
+            payload = source.read_text() + f"\nopen({json.dumps(str(ran))}, 'w').write('ran')\n"
+            pyc.write_bytes(original[:16] + marshal.dumps(compile(payload, str(source), "exec")))
+            try:
+                project = pathlib.Path(tmp) / "proj"
+                (project / ".aec").mkdir(parents=True)
+                (project / ".aec" / "records.jsonl").write_text("")
+                subprocess.run(["git", "init", "-q", str(project)], check=True)
+                env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
+                subprocess.run(["bash", "-c", U.hook_command(str(self.py), pin)], env=env,
+                               capture_output=True, text=True, timeout=120)
+                self.assertTrue((project / ".aec" / "edges.jsonl").exists(), "the hook ran aec")
+                self.assertFalse(ran.exists(), "the hook loaded unverified cached bytecode")
+            finally:
+                pyc.write_bytes(original)
+
     def test_installed_hook_ignores_a_hostile_checkout(self):
         pin = self.pin()
         with tempfile.TemporaryDirectory() as tmp:
