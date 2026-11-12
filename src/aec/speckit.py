@@ -34,7 +34,7 @@ END_RE = re.compile(r"^<!-- telosmith:end -->[ \t\r]*$", re.M)  # a standalone l
 ATTR_RE = re.compile(r"(\w+)=(\S+)")
 # id@version citation. Ids start with an uppercase letter (P0, AEC-R2, DG-RA); code: refs are unversioned.
 CITE_RE = re.compile(r"(?<![\w@.])([A-Z][A-Za-z0-9_.-]*?)@(\d+)(?!\w|\.\d)")
-FR_RE = re.compile(r"^\s*[-*]\s+\*\*(FR-\d+)\*\*:?\s*(.*)$", re.M)
+FR_RE = re.compile(r"^\s*[-*]\s+\*\*(FR-\d+[a-z]?)\*\*:?\s*(.*)$", re.M)
 BLOCKS = {"requirements", "constitution"}
 HASH_LEN = 16  # integrity of the generated text against hand edits, not a security property
 
@@ -374,9 +374,35 @@ def spec_files(paths: list[Path]) -> list[Path]:
 
 
 def _write(path: Path, text: str) -> None:
-    tmp = path.with_name(path.name + ".telosmith-tmp")
-    tmp.write_bytes(text.encode("utf-8"))
-    os.replace(tmp, path)
+    """Atomic replace through a uniquely named, exclusively created temp file beside the target, keeping the
+    target's permissions; the temp file is removed on failure (Copilot review on #73: a fixed scratch name could
+    truncate an unrelated file or follow a symlink)."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".telosmith-tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(text.encode("utf-8"))
+        os.chmod(tmp, path.stat().st_mode & 0o7777)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _load(rec_path: Path) -> Store | None:
+    """Load records; refuse a partial ledger (Copilot review on #73): records the loader dropped as errors would
+    silently vanish from derived blocks or make drift look clean."""
+    store = Store.load(rec_path)
+    errors = [p for p in store.problems if p.level == "error"]
+    for p in errors:
+        print(f"error: {rec_path}: {p.ref}: {p.msg}")
+    if errors:
+        print(f"error: {len(errors)} record(s) could not be loaded; fix them before deriving or comparing")
+        return None
+    return store
 
 
 def cmd_derive(a) -> int:
@@ -389,7 +415,9 @@ def cmd_derive(a) -> int:
     if not rec_path or not rec_path.is_file():
         print("error: no .aec/records.jsonl found above the feature; pass --records")
         return 2
-    store = Store.load(rec_path)
+    store = _load(rec_path)
+    if store is None:
+        return 2
     targets = [(spec, "requirements" if a.insert else None)]
     if a.constitution:
         targets.append((Path(a.constitution), "constitution" if a.insert else None))
@@ -424,7 +452,9 @@ def cmd_drift(a) -> int:
     if not rec_path or not rec_path.is_file():
         print("error: no .aec/records.jsonl found; pass --records")
         return 2
-    store = Store.load(rec_path)
+    store = _load(rec_path)
+    if store is None:
+        return 2
     actor = os.environ.get("RELAYKIT_ACTOR") or None
     texts, findings = [], []
     for f in files:

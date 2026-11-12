@@ -42,6 +42,7 @@ A person reads the report. This narrative is authored and must survive regenerat
 
 - **FR-001**: Reports carry a structural label (R-A@1).
 - **FR-002**: Something nobody recorded yet.
+- **FR-002a**: A suffixed one, also unrecorded.
 
 ## Open questions
 
@@ -172,6 +173,30 @@ class Derive(unittest.TestCase):
         store = Store.load(self.r.root / ".aec" / "records.jsonl")
         self.assertFalse([f for f in S.drift_text(store, once.decode(), "spec.md") if f.kind == "edited-block"])
 
+    def test_write_never_touches_an_existing_scratch_file_or_symlink_target(self):  # violation (Copilot, #73)
+        victim = self.r.root / "victim.txt"
+        victim.write_text("keep me")
+        legacy = self.r.feature / "spec.md.telosmith-tmp"
+        legacy.symlink_to(victim)
+        self.r.spec.chmod(0o640)
+        code, out = self.r.run("speckit", "derive", str(self.r.feature), "--insert")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(victim.read_text(), "keep me")
+        self.assertFalse(self.r.spec.is_symlink())
+        self.assertEqual(self.r.spec.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(sorted(p.name for p in self.r.feature.iterdir()), ["spec.md", "spec.md.telosmith-tmp"])
+
+    def test_unloadable_record_stops_both_commands(self):  # violation (Copilot, #73)
+        with open(self.r.root / ".aec" / "records.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "R-X", "version": "1", "type": "requirement", "text": "bad version"}) + "\n")
+        before = self.r.spec.read_bytes()
+        code, out = self.r.run("speckit", "derive", str(self.r.feature), "--insert")
+        self.assertEqual(code, 2)
+        self.assertIn("could not be loaded", out)
+        self.assertEqual(self.r.spec.read_bytes(), before)
+        code, out = self.r.run("speckit", "drift", str(self.r.feature))
+        self.assertEqual(code, 2)
+
     def test_select_variants(self):
         store = Store.load(self.r.root / ".aec" / "records.jsonl")
         self.assertEqual([r.id for r in S.select(store, {"select": "serves:P0"}, "")], ["R-A", "R-B", "R-C"])
@@ -221,6 +246,7 @@ class Drift(unittest.TestCase):
         found = self.kinds()
         by = {(f["kind"], f["subject"]) for f in found}
         self.assertIn(("unrecorded-requirement", "FR-002"), by)       # violation
+        self.assertIn(("unrecorded-requirement", "FR-002a"), by)      # suffixed ids (Copilot, #73)
         self.assertNotIn(("unrecorded-requirement", "FR-001"), by)    # decoy: FR-001 cites R-A@1
         prop = next(f["proposal"] for f in found if f["subject"] == "FR-002")
         self.assertEqual(prop["epistemic"], "provisional")
