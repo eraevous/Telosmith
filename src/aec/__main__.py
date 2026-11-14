@@ -13,6 +13,7 @@
   python -m aec source show REF [--context N]                read anchored passages (offline)
   python -m aec source search PATTERN [--root R] [--regex]   direct fallback source search (offline)
   python -m aec speckit derive FEATURE_DIR [--check] [--insert] [--constitution FILE]  regenerate record-derived spec blocks
+  aec hook install|uninstall|print [--settings FILE] | verify [--pin D]  user-level Claude hook (draft, DEC-223)
   python -m aec speckit drift PATH... [--all] [--json]         spec/record drift, both directions (writes nothing)
 """
 from __future__ import annotations
@@ -23,7 +24,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, speckit
+from . import __version__, speckit, userhook
 from . import edges as E
 from .impact import impact, render
 from .records import Store, check
@@ -135,6 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--repo", default=".", help="repository containing .aec/sources.json")
     search.add_argument("--records", help="record file (default: ROOT/.aec/records.jsonl)")
     speckit.add_parser(sub)
+    userhook.add_parser(sub)
     snap_parser = sub.add_parser("snapshot", help="snapshot a working tree or local git revision")
     snap_parser.add_argument("root", nargs="?", default=".")
     snap_parser.add_argument("--rev")
@@ -394,7 +396,7 @@ HANDLERS = {
     "edges": _cmd_edges, "check": _cmd_check, "impact": _cmd_impact, "code-impact": _cmd_code_impact,
     "init": _cmd_init, "anchor": _cmd_anchor, "append": _cmd_append, "import-purpose": _cmd_import_purpose, "source": _cmd_source,
     "snapshot": _cmd_snapshot, "diff": _cmd_diff, "reach": _cmd_query, "fan": _cmd_query, "unresolved": _cmd_query,
-    "speckit": speckit.run,
+    "speckit": speckit.run, "hook": userhook.cli,
 }
 
 

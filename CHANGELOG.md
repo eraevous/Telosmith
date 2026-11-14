@@ -5,6 +5,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Added (draft, DEC-223 proposed design)
+- `aec hook install|uninstall|print|verify` and `aec hook run`: a user-level Claude Code hook that runs the
+  installed `aec` from its own environment (`-I`, from `/`, absolute interpreter), only in repos with
+  `.aec/records.jsonl`, and refuses to run when `aec` was not loaded from that environment or its files no
+  longer match pip's RECORD and the digest pinned at install. Claude Code merges hooks across settings levels,
+  so this adds a check and does not disable a checkout's own hooks; see `docs/integrations/user-level-hook.md`.
+
 ### Security
 - The Claude hook from `aec init` now starts Python from `/` (`aec() { ( cd / && python3 -m aec "$@" ); }`)
   and passes the project as absolute paths. Before, it ran `python3 -m aec` after `cd`-ing into the checkout,
