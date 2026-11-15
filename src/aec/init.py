@@ -7,6 +7,7 @@ it. Standard library only.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import textwrap
@@ -71,6 +72,11 @@ HOOK_COMMAND = (
     "aec code-impact --help 2>/dev/null | grep -q -- --exit-code || "
     "{ echo 'Telosmith hook: the installed aec has no code-impact --exit-code; install Telosmith v0.5.0 or later "
     "(the commit your CI job pins)' >&2; exit 1; }; "
+    # A branch controls everything under .aec. A symlink planted at an output would let the hook overwrite any
+    # file the user owns; refuse before writing (the same rule as the user-level hook, Codex review on #79).
+    # aec >= this release also renames outputs into place, so older copies of this text are covered too.
+    "for f in \"$P/.aec\" \"$P/.aec/records.jsonl\" \"$P/.aec/edges.jsonl\" \"$P/.aec/hook-before.jsonl\"; do "
+    "if [ -L \"$f\" ]; then echo \"Telosmith hook refused to run: $f is a symlink\" >&2; exit 2; fi; done; "
     "aec edges \"$P\" -o \"$P/.aec/edges.jsonl\" 2>/dev/null || "
     "{ rm -f \"$P/.aec/edges.jsonl\"; echo 'Telosmith hook: could not refresh .aec/edges.jsonl; skipped the records check' >&2; exit 1; }; "
     "aec check \"$P/.aec/records.jsonl\" --edges \"$P/.aec/edges.jsonl\" >/dev/null || "
@@ -274,11 +280,10 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     def put(rel: str, make):
         p = aec / rel
         key = f".aec/{rel}"
-        if p.exists():
+        if os.path.lexists(p):  # a dangling symlink counts as present: never create its target
             kept.append(key)
             return
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(make(), encoding="utf-8")
+        E.write_replacing(p, make())
         created.append(key)
 
     put("records.jsonl", lambda: _records(owner, purpose, anchor))
