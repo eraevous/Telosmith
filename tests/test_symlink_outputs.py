@@ -89,8 +89,39 @@ class CliOutputTests(_Tmp):
         done = _aec("edges", str(self.project), "-o", str(dest), cwd=self.outside)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(dest.is_file() and not dest.is_symlink())
-        self.assertTrue(os.stat(dest).st_mode & 0o044, "readable like a normal write, not mkstemp's 0600")
+        reference = self.project / "out" / "reference"
+        reference.write_text("x")  # an ordinary write under the same umask
+        self.assertEqual(os.stat(dest).st_mode & 0o777, os.stat(reference).st_mode & 0o777,
+                         "same mode as an ordinary write, not mkstemp's 0600")
+        reference.unlink()
         self.assertEqual([p.name for p in dest.parent.iterdir()], ["edges.jsonl"], "no temp file left behind")
+
+
+    def test_rewrite_keeps_an_existing_files_mode(self):  # Copilot on #83: don't widen a private file to 0644
+        dest = self.project / "private.jsonl"
+        dest.write_text("old")
+        os.chmod(dest, 0o600)
+        E.write_replacing(dest, "new")
+        self.assertEqual(dest.read_text(), "new")
+        self.assertEqual(os.stat(dest).st_mode & 0o777, 0o600)
+
+    def test_restrictive_umask_is_honoured(self):  # Copilot on #83: a 077 umask gives 0600, like an ordinary write
+        old = os.umask(0o077)
+        try:
+            dest = self.project / "fresh.jsonl"
+            E.write_replacing(dest, "x")
+        finally:
+            os.umask(old)
+        self.assertEqual(os.stat(dest).st_mode & 0o777, 0o600)
+
+    def test_replaced_symlink_does_not_take_the_targets_mode(self):
+        os.chmod(self.victim, 0o640)
+        dest = self.project / "link.jsonl"
+        dest.symlink_to(self.victim)
+        E.write_replacing(dest, "x")
+        self.assert_victim_untouched()
+        umask = os.umask(0); os.umask(umask)
+        self.assertEqual(os.stat(dest).st_mode & 0o777, 0o666 & ~umask)
 
 
 @unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")

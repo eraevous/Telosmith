@@ -23,6 +23,7 @@ import hashlib
 import io
 import json
 import os
+import stat
 import sys
 import tempfile
 import tokenize
@@ -610,7 +611,8 @@ def write_replacing(path: str | Path, text: str) -> None:
     Outputs usually live inside a checkout (`.aec/edges.jsonl`, `.aec/hook-before.jsonl`), and a branch
     controls what sits at those paths. If it plants a symlink to a file the user owns, an ordinary write
     would overwrite that file; a rename replaces the symlink itself instead. The new file gets the mode an
-    ordinary write would (0666 less the umask), and the temp file is removed on failure.
+    ordinary write would (an existing regular file keeps its mode; a new file or a
+    replaced symlink gets 0666 less the umask), and the temp file is removed on failure.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -618,9 +620,17 @@ def write_replacing(path: str | Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            st = None
+        if st is not None and stat.S_ISREG(st.st_mode):
+            mode = stat.S_IMODE(st.st_mode)  # keep an existing file's mode: never widen a private 0600 file
+        else:  # new file, or a symlink being replaced: never take the link target's mode
+            umask = os.umask(0)
+            os.umask(umask)
+            mode = 0o666 & ~umask
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         try:
