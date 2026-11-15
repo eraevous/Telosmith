@@ -16,9 +16,12 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 - `aec edges -o`, `aec edges --legacy-csv` and `aec snapshot -o` now write a fresh file and rename it onto the
   destination, so a symlink a branch planted at `.aec/edges.jsonl` or `.aec/hook-before.jsonl` is replaced
   instead of written through (before, the project hook from `aec init` could overwrite any file the developer
-  owns). Every existing hook copy gets this by upgrading aec, with no change to its text. The hook text from
-  `aec init` also refuses to run when `.aec`, `records.jsonl` or either output is a symlink, which protects it
-  against an older installed aec; `aec init` no longer creates a file at a dangling symlink's target.
+  owns). Existing hook copies get this by upgrading aec, with no change to their text, but it covers only a
+  symlink at the output file itself: with old hook text, a symlinked `.aec` directory still lets a branch
+  replace or delete files named `edges.jsonl` or `hook-before.jsonl` in the link's target directory. The hook
+  text from `aec init` now refuses to run when `.aec`, `records.jsonl` or either output is a symlink, which
+  closes that case and protects it against an older installed aec; refresh the hook text to get it. `aec init`
+  no longer creates a file at a dangling symlink's target.
   Same gap as the Codex security finding fixed in the user-level hook on #79.
 - The Claude hook from `aec init` now starts Python from `/` (`aec() { ( cd / && python3 -m aec "$@" ); }`)
   and passes the project as absolute paths. Before, it ran `python3 -m aec` after `cd`-ing into the checkout,
