@@ -22,7 +22,9 @@ import fnmatch
 import hashlib
 import io
 import json
+import os
 import sys
+import tempfile
 import tokenize
 import warnings
 from pathlib import Path
@@ -600,6 +602,32 @@ def dumps(snap: dict) -> str:
     lines = [json.dumps(snap["header"], sort_keys=True)]
     lines += [json.dumps(e, sort_keys=True) for e in snap["edges"]]
     return "\n".join(lines) + "\n"
+
+
+def write_replacing(path: str | Path, text: str) -> None:
+    """Write TEXT to PATH by renaming a fresh file onto it, never by opening PATH.
+
+    Outputs usually live inside a checkout (`.aec/edges.jsonl`, `.aec/hook-before.jsonl`), and a branch
+    controls what sits at those paths. If it plants a symlink to a file the user owns, an ordinary write
+    would overwrite that file; a rename replaces the symlink itself instead. The new file gets the mode an
+    ordinary write would (0666 less the umask), and the temp file is removed on failure.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".telosmith-tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def loads(text: str) -> dict:

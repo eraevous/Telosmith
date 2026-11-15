@@ -13,6 +13,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   so this adds a check and does not disable a checkout's own hooks; see `docs/integrations/user-level-hook.md`.
 
 ### Security
+- `aec edges -o`, `aec edges --legacy-csv` and `aec snapshot -o` now write a fresh file and rename it onto the
+  destination, so a symlink a branch planted at `.aec/edges.jsonl` or `.aec/hook-before.jsonl` is replaced
+  instead of written through (before, the project hook from `aec init` could overwrite any file the developer
+  owns). Every existing hook copy gets this by upgrading aec, with no change to its text. The hook text from
+  `aec init` also refuses to run when `.aec`, `records.jsonl` or either output is a symlink, which protects it
+  against an older installed aec; `aec init` no longer creates a file at a dangling symlink's target.
+  Same gap as the Codex security finding fixed in the user-level hook on #79.
 - The Claude hook from `aec init` now starts Python from `/` (`aec() { ( cd / && python3 -m aec "$@" ); }`)
   and passes the project as absolute paths. Before, it ran `python3 -m aec` after `cd`-ing into the checkout,
   so a branch adding `aec.py`, `runpy.py` or any module Python imports at startup could run as the developer

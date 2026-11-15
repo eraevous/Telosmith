@@ -172,8 +172,7 @@ def _cmd_snapshot(a, ap) -> int:
     try:
         text = E.dumps(E.snapshot(a.root, rev=a.rev))
         if a.output:
-            Path(a.output).parent.mkdir(parents=True, exist_ok=True)
-            Path(a.output).write_text(text, encoding="utf-8")
+            E.write_replacing(a.output, text)  # replaces a planted symlink, never writes through it
         else:
             sys.stdout.write(text)
     except (OSError, ValueError) as error:
@@ -330,15 +329,14 @@ def _cmd_edges(a, ap) -> int:
         return 2
     text = E.dumps(snap)
     if a.output:
-        Path(a.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(a.output).write_text(text, encoding="utf-8")
+        E.write_replacing(a.output, text)  # replaces a planted symlink, never writes through it
         h = snap["header"]
         print(f"aec edges: {len(snap['edges'])} edges from {h['files']} files "
               f"({len(h['skipped'])} skipped) -> {a.output}", file=sys.stderr)
     else:
         sys.stdout.write(text)
     if a.legacy_csv:
-        Path(a.legacy_csv).write_text(E.legacy_csv(snap), encoding="utf-8")
+        E.write_replacing(a.legacy_csv, E.legacy_csv(snap))
     return 0
 
 
