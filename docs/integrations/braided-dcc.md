@@ -91,7 +91,7 @@ are re-derived on every review and forgotten after it. The asserted benefit (DEC
 demonstrated) is:
 
 - **review gets shorter**, because the reviewer checks code against records someone else wrote, instead of
-  reconstructing intent from the PR text (this is the measure "review-response commits per feature");
+  reconstructing intent from the PR text (this is the measure "share of review-response commits");
 - **drift is caught by someone with no stake in the code** (a different model family by default), which is the measure
   "drift caught by independent vs implementer records";
 - **the reasons survive the PR**, so the next change in the same area starts from them.
@@ -150,7 +150,7 @@ for 12–17 Nov:
 
 | Measure | Baseline | How counted |
 |---|---|---|
-| Review-response commits per feature | 48% of product-repo commits | commits on the PR after the first review, ÷ features ("keep" items) |
+| Share of review-response commits | 48% of product-repo commits | review-response commits ÷ all commits on the PR, classified as the baseline was (review-response, new work, hook propagation, tests and docs); per feature ("keep" items) is kept as a secondary count with no baseline (Codex on #88) |
 | Copied cross-repo commits | 21 (12–17 Nov) | commits with the same Telosmith change in more than one repo |
 | Drift caught, independent vs implementer records | none recorded | review or maintainer findings that cite a record, split by the record's `author_role` |
 | Wall-clock to a ready PR | per PR, from the GitHub timeline | first commit to `ready_for_review` |
