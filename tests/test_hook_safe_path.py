@@ -114,6 +114,43 @@ class HookSafePathTests(unittest.TestCase):
             self.assertTrue(seen["file"].startswith(str(sibling)), seen)
             self.assertEqual(seen["pythonpath"], str(sibling), "relative entries become absolute; inside ones drop")
 
+    def _filtered(self, project, pp):
+        """PYTHONPATH as the launcher would hand it to aec (stops just before aec runs)."""
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project), PYTHONPATH=pp)
+        sh = "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; " + HOOK_COMMAND.split("aec code-impact --help")[0]
+        probe = sh.replace("python3 -m aec \"$@\"", "echo \"${PYTHONPATH-<unset>}\"")
+        done = subprocess.run(["bash", "-c", probe + "aec"], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.strip()
+
+    def test_ancestor_of_the_checkout_is_dropped(self):
+        # Copilot on #87: with the checkout at <root>/aec, an entry for <root> makes the checkout itself
+        # importable as `aec`, so `python3 -m aec` would run the branch's aec/__main__.py.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp).resolve()
+            project = root / "aec"
+            project.mkdir()
+            marker = root / "shadow-ran"
+            shadow = f"open({json.dumps(str(marker))}, 'w').write('ran')\n"
+            (project / "__init__.py").write_text(shadow)
+            (project / "__main__.py").write_text(shadow)
+            (root / "sibling").mkdir()
+            pp = os.pathsep.join(["..", str(root), "/", "../sibling", "{outside}"])
+            seen, outside = self._probe(project, {"PYTHONPATH": pp})
+            self.assertFalse(marker.exists(), "the checkout was imported as aec through an ancestor entry")
+            self.assertEqual(seen["pythonpath"], os.pathsep.join([str(root / "sibling"), outside]))
+            self.assertTrue(seen["file"].startswith(outside), seen)
+
+    def test_resolved_entry_with_a_path_separator_is_dropped(self):
+        # Copilot on #87: a branch-planted symlink src -> "/nonexistent:<checkout>/payload" resolves to one
+        # string that passes the inside-checkout test, then Python splits it and imports from the checkout.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = pathlib.Path(tmp).resolve()
+            (project / "payload").mkdir()
+            (project / "src").symlink_to(f"/nonexistent{os.pathsep}{project}/payload")
+            self.assertEqual(self._filtered(project, "src"), "<unset>")
+            self.assertEqual(self._filtered(project, os.pathsep.join(["src", "/abs/kept"])), "/abs/kept")
+
     def test_pythonpath_unset_or_all_inside_leaves_it_unset(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = pathlib.Path(tmp).resolve()

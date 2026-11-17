@@ -54,12 +54,17 @@ remaining evidence is good enough. That stays a review question.
 # aec.py). Entries outside the checkout are kept. A relative entry meant the working directory, which was the
 # project, so it is resolved against the project and passed on as an absolute path; after `cd /` it would
 # mean / (Codex on Fathom#49, Today#7, MtG#46: a sibling checkout `PYTHONPATH=../Telosmith/src` stopped importing).
+# Two more entries are dropped (Copilot on #87): an ancestor of the checkout, which would make the checkout
+# itself importable under its directory name (a checkout named aec/ would shadow Telosmith), and a resolved
+# entry containing the path separator, which a symlink a branch plants could otherwise use to smuggle in a
+# second entry that points inside the checkout.
 # The filter runs in an isolated interpreter (-I: no PYTHONPATH, no user site) that also starts from /.
 HOOK_PATHFILTER = (
     "import os,sys; b=os.path.realpath(sys.argv[1]); p=os.path.join(b,''); "
+    "r=lambda a: os.path.join(os.path.realpath(a),''); "
     "print(os.pathsep.join(a for a in (e if os.path.isabs(e) else os.path.realpath(os.path.join(b,e)) "
     "for e in os.environ.get('PYTHONPATH','').split(os.pathsep) if e) "
-    "if not os.path.join(os.path.realpath(a),'').startswith(p)))"
+    "if os.pathsep not in a and not r(a).startswith(p) and not p.startswith(r(a))))"
 )
 HOOK_AEC = (
     "P=\"$CLAUDE_PROJECT_DIR\"; aec() { ( "

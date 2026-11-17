@@ -37,7 +37,10 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 - Relative PYTHONPATH entries in that launcher are resolved against the project, as they were when the hook
   ran there, and passed to `aec` as absolute paths. Before, they resolved from `/`, so a sibling checkout such as
   `PYTHONPATH=../Telosmith/src` stopped importing and the hook skipped every check (Codex on Fathom#49, Today#7,
-  MtG#46). A relative entry that lands inside the checkout (`.`, `src`) is still dropped. New hook text, so a new
+  MtG#46). A relative entry that lands inside the checkout (`.`, `src`) is still dropped, and so is any entry
+  that is an ancestor of the checkout (which would make a checkout named `aec/` importable as `aec`) or whose
+  resolved path contains the path separator (a symlinked `src` pointing at `/x:<checkout>/payload`); Copilot on
+  #87. The ancestor case also applied to absolute entries before this change. New hook text, so a new
   fingerprint: repositories pinning the hook need the refreshed snippet.
 
 ### Records
