@@ -84,6 +84,36 @@ class HookSafePathTests(unittest.TestCase):
             self.assertEqual(seen["pythonpath"], outside, "only entries outside the checkout survive")
             self.assertEqual(seen["cwd"], "/")
 
+    def test_relative_pythonpath_resolves_from_the_project(self):
+        # Codex on Fathom#49 / MtG#46 (hook e019ae40): a relative entry meant the project, where the hook
+        # used to run; after `cd /` a sibling checkout `../Telosmith/src` was read from / and stopped importing.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp).resolve()
+            project, sibling = root / "proj", root / "Telosmith" / "src"
+            project.mkdir()
+            marker = project / "shadow-ran"
+            shadow = f"open({json.dumps(str(marker))}, 'w').write('ran')\n"
+            for sub in (project, project / "src"):
+                (sub / "aec").mkdir(parents=True)
+                (sub / "aec" / "__init__.py").write_text(shadow)
+                (sub / "aec" / "__main__.py").write_text(shadow)
+            (sibling / "aec").mkdir(parents=True)
+            (sibling / "aec" / "__init__.py").write_text("")
+            (sibling / "aec" / "__main__.py").write_text(
+                "import json, os, aec\nprint(json.dumps({'file': aec.__file__,"
+                " 'pythonpath': os.environ.get('PYTHONPATH')}))\n")
+            pp = os.pathsep.join([".", "src", "../Telosmith/src", "./src/../../proj"])
+            env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project), PYTHONPATH=pp)
+            env.pop("RELAYKIT_RECORDS", None)
+            launcher = "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; " + HOOK_COMMAND.split("aec code-impact --help")[0]
+            done = subprocess.run(["bash", "-c", launcher + "aec probe"], env=env,
+                                  capture_output=True, text=True, timeout=60)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            seen = json.loads(done.stdout)
+            self.assertFalse(marker.exists(), "a relative entry into the checkout survived")
+            self.assertTrue(seen["file"].startswith(str(sibling)), seen)
+            self.assertEqual(seen["pythonpath"], str(sibling), "relative entries become absolute; inside ones drop")
+
     def test_pythonpath_unset_or_all_inside_leaves_it_unset(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = pathlib.Path(tmp).resolve()

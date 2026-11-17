@@ -34,6 +34,11 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   dropped before `aec` starts, so an inherited absolute entry can't bring a branch's `aec.py` back; entries
   outside the checkout are kept, and relative entries now resolve from `/`. A relative `RELAYKIT_RECORDS` is
   anchored to the project, as it was when the hook ran there. (Copilot review on #77.)
+- Relative PYTHONPATH entries in that launcher are resolved against the project, as they were when the hook
+  ran there, and passed to `aec` as absolute paths. Before, they resolved from `/`, so a sibling checkout such as
+  `PYTHONPATH=../Telosmith/src` stopped importing and the hook skipped every check (Codex on Fathom#49, Today#7,
+  MtG#46). A relative entry that lands inside the checkout (`.`, `src`) is still dropped. New hook text, so a new
+  fingerprint: repositories pinning the hook need the refreshed snippet.
 
 ### Records
 - Telosmith's own purpose is now `AEC-P0@3` (Kate's wording, anchored to DEC-116); the requirements that served
