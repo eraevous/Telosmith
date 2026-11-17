@@ -1,6 +1,6 @@
 # Braided Dual-Channel Coding: the development method, and how Telosmith changes reach every repo
 
-Author: claude:aec#wake-20261117-19 · Reviewer: none yet (Kate asked: relay-kit-private handoff HO-AEC-20261117-DBN5) · model=claude-opus-5-5
+Author: claude:aec#wake-20261117-19 · Reviewer: Kate (API instance, gpt-6.1-sol, 2026-11-17T19:19Z; reviewed the summary, not this text; her conditions are applied below and marked "Kate") · model=claude-opus-5-5
 
 Status: **proposed** (`AEC-D-braided-dcc@1`, `epistemic: provisional`). Nothing here is adopted until Zach accepts it.
 Rollout was approved live on 2026-11-17 ("Review it, then roll it. We'll figure it out, live, and learn from the
@@ -25,15 +25,20 @@ The owner (Zach) stays the only actor who accepts a decision (`author_role: owne
 
 For each PR, before it is marked ready:
 
-1. **Coverage:** every new public behaviour in the diff is served by a requirement; every changed requirement has code
-   that `implemented_by` points at. (`aec check --edges` already finds dangling code references; this is the inverse,
-   read by a person.)
+1. **Coverage, both ways:** every changed requirement has code and tests that `implemented_by` points at, **and** every
+   new or changed behaviour in the diff is served by a requirement, so undocumented behaviour can't escape. (`aec check
+   --edges` already finds dangling code references; the second direction is read by a person.)
 2. **Direction:** the code does what the record says, not something adjacent. The implementer's PR text is evidence of
    intent, not of behaviour; the maintainer reads the diff and tests.
 3. **Upstream ownership:** a downstream module is not quietly deriving what an upstream one owns (the October 2026
    simulator-parsing case in MtG is the reference example).
 4. **Scope:** the change stays inside the purpose (`serves` chain to the repo's P0). Anything outside is a proposal
    for the owner, not a record edit.
+5. **Evidence and open disagreement** (added on Kate's review): what supports each claimed requirement-to-code match,
+   what is still unverified, and which objections are still open.
+
+A maintainer who was not given the diff, the applicable records and the test evidence reports the PR as **not
+assessed**, never as clean (Kate: a blocking condition).
 
 The maintainer writes what it finds as records (a new version, or a `claim` with `epistemic: provisional`) or, when
 it disagrees with the implementer and cannot settle it, as a challenge for the owner. It never edits code.
@@ -48,6 +53,18 @@ it disagrees with the implementer and cannot settle it, as a challenge for the o
 A record written by the semantic maintainer carries `author_role: independent`; a record the lane writes for its own
 code carries `implementer`. When Kate's text reaches the repo through another actor (the API Kate reply is committed by
 a lane), `authored_by` names Kate and the commit names the transcriber: authorship is who wrote the words.
+
+`author_role: independent` is a **declaration, not a test** (Kate). A different model family does not by itself make
+the author independent, and nothing may claim verified independence from the field alone. Drift can hide in the
+transcription step (selective copying, dropped dissent, edited links, stale code context, or a brief the implementer
+curated). So a transcribed record keeps:
+- a `source` reference to the maintainer's reply (for API Kate, the `kate-replies` file and its hash);
+- the authored text exactly as written;
+- the code revision the maintainer was shown;
+- the committer, separate from `authored_by` (the git commit already gives this).
+
+A mechanical change to transcribed text (reformatting, a fixed link) is stated in the commit. A change in meaning goes
+back to the maintainer for review.
 
 ### What `aec check` should report (fields first, enforcement later)
 
@@ -105,6 +122,17 @@ the edges/check/code-impact sequence). Every fix to that logic is a text change 
   (A), generalising MtG's `aec-upstream.yml` into one reusable workflow. One pin file per repo; one bot PR per release
   per repo, batched on the daily decision sheet.
 - **Not recommended:** C, because it moves the commit from a person to a tool without removing it.
+
+What D does not remove (Kate): per-repo pin bumps, and the gap between the version CI pins and the version a lane's
+local hook resolves. Its risks are a hook that picks up an unintended global `aec`, a missing install, changed exit
+semantics, and a larger blast radius for a bad release. **Before any repo's existing hook is replaced** (Kate: a
+blocking condition):
+- the one-line hook resolves the pinned version locally;
+- a missing install or a version mismatch gets an explicit diagnostic;
+- compatibility tests show the same exit behaviour as today's hook;
+- a rollback path is written down.
+
+The enforcement policy stays advisory.
 
 Until D lands (it changes `aec init` output and is its own PR), the handoff's interim applies: propagate the method via
 the lane-rules change and one Telosmith release pin.
