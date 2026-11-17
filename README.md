@@ -38,9 +38,12 @@ see [evidence and limitations](#evidence-and-limitations).
 folder keep working. Since v0.5 the same command is also installed as `telosmith`; the examples use `aec`,
 which every release has and which stays the primary name.*
 
-The standard-library CLI works in three settings: as a [Spec Kit](https://github.com/github/spec-kit)
+The standard-library CLI is built to support three settings: as a [Spec Kit](https://github.com/github/spec-kit)
 extension; as an extension of other agentic coding setups (Claude Code hooks, git hooks, CI, rules
-files); and standalone, with just the records and the `check` and `impact` commands. See
+files); and standalone, with just the records and the `check` and `impact` commands.
+The Spec Kit extension's installation is tested against CLI v1.2.3; use in a real Spec Kit
+workflow is untested. Hooks have been exercised directly, not demonstrated inside a live
+Claude Code session. See
 [docs/use-cases.md](docs/use-cases.md) and
 [docs/integrations/without-spec-kit.md](docs/integrations/without-spec-kit.md).
 
@@ -48,7 +51,7 @@ files); and standalone, with just the records and the `check` and `impact` comma
 
 AI coding agents are good at making a change and bad at knowing what else depended on the old
 behaviour: a requirement someone wrote down, a claim a decision rested on, a caller nobody
-mentioned. Tests catch broken behaviour; they don't catch a broken *reason*.
+mentioned.
 
 For example, an agent "simplifies" `hmac.compare_digest(sig, expected)` to `sig == expected` in
 [pallets/itsdangerous](https://github.com/pallets/itsdangerous). All 297 of the library's tests
@@ -81,7 +84,12 @@ pip install "git+https://github.com/eraevous/Telosmith.git@main"   # 0.5.0 on ma
 aec --version        # aec 0.5.0 (telosmith --version works too)
 ```
 
-Python 3.10 or newer; no other dependencies.
+Python 3.10 or newer; no runtime dependencies beyond the standard library.
+
+CI includes a local-checkout package-install test, not the Git-URL install above. In the
+[README accuracy review](https://github.com/eraevous/Telosmith/pull/86#pullrequestreview-5932202647),
+the reviewer separately checked `pip install .` from this checkout on Python 3.13 only;
+that manual check did not cover the Git URL or other Python versions.
 
 ## Set up your own records
 
@@ -170,10 +178,11 @@ what to look for wrote the requirement down, so it demonstrates the mechanism, n
 
 Telosmith is alpha (v0.5). v0.5 adds the snapshot, diff, reach, fan, unresolved, anchor and
 append commands to the seven commands of v0.4; see [the structural reference](docs/reference/edges.md).
-Current main also includes [Spec Kit derived blocks and drift reports](docs/integrations/spec-kit-derive.md)
-and a [user-level hook prototype](docs/integrations/user-level-hook.md). Explicit derivation can update
-record-derived spec blocks; it leaves authored text outside those blocks alone. These mechanisms do
-not establish semantic correctness, verified consent or general governance enforcement. Automatic
+This checkout also includes [Spec Kit derived blocks and drift reports](docs/integrations/spec-kit-derive.md)
+and a [user-level hook prototype](docs/integrations/user-level-hook.md), untested in a live session.
+Explicit derivation can update record-derived spec blocks; `speckit derive --insert` adds a new
+derived block where none exists, after `## Requirements` or at the end of the authored file.
+Other authored text is left alone. These mechanisms do not establish semantic correctness, verified consent or general governance enforcement. Automatic
 reasoning-drift triggers and handoff premise checks remain planned. A minor
 version before 1.0 may change output formats or record fields; every change is
 listed in [CHANGELOG.md](CHANGELOG.md). The extractor's tool_version (0.4.1) is separate
