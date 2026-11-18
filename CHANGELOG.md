@@ -5,6 +5,12 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Added
+- `aec pin-check [ROOT]`: exits 0 only when the local aec equals the Telosmith version the repository's CI pins
+  (workflow `pip install "git+…Telosmith.git@<ref>"` lines and `tools/aec_upstream.json`), and 1 with the reason
+  otherwise: mismatch, pins that disagree, a missing or unreadable pin, or an indeterminate local version. It is
+  the check `AEC-R-hook-line-pin-gate@1` asks the one-line hook to enforce; wiring it into the line is a later PR.
+
 ### Added (draft, DEC-223 proposed design)
 - `aec hook install|uninstall|print|verify` and `aec hook run`: a user-level Claude Code hook that runs the
   installed `aec` from its own environment (`-I`, from `/`, absolute interpreter), only in repos with
