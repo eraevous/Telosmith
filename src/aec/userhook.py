@@ -205,12 +205,21 @@ def _call(argv: list[str]) -> tuple[int, str]:
 def _produce(argv: list[str], directory: Path, dest: str) -> int:
     """Run an aec command whose output goes to `-o`, writing a new private file in `directory` and renaming it
     onto `dest` only on success. Never opens `dest`, so a symlink planted there is replaced, not followed."""
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".hook-", suffix=".tmp")
+    try:
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".hook-", suffix=".tmp")
+    except OSError:
+        return 1
     os.close(fd)
     try:
         rc = _call(argv + ["-o", tmp])[0]
         if rc == 0:
-            os.replace(tmp, dest)
+            # A destination that can't be replaced (a directory, a read-only .aec) is a failed step, like the
+            # inline hook's `aec ... -o <dest>` exiting non-zero: return a code so the caller's existing branch
+            # runs, never a traceback (Copilot on #89).
+            try:
+                os.replace(tmp, dest)
+            except OSError:
+                return 1
         return rc
     finally:
         with contextlib.suppress(FileNotFoundError):

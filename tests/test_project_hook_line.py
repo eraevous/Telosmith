@@ -142,10 +142,30 @@ class SideBySide(unittest.TestCase):
             self.assertFalse(os.path.lexists(target), rel)
             path.unlink()
 
+    def test_output_that_cannot_be_replaced_exits_like_inline(self):
+        # A directory where an output file goes: the inline hook's `aec ... -o <dir>` fails and takes its
+        # failure branch; the line must take the same branch, not raise (Copilot on #89).
+        for rel in (".aec/hook-before.jsonl", ".aec/edges.jsonl"):
+            path = self.project / rel
+            if os.path.lexists(path):
+                path.unlink()
+            path.mkdir()
+            done = self._both()
+            self.assertEqual(done["inline"].returncode, done["line"].returncode,
+                             f"{rel}: inline {done['inline'].stderr!r} line {done['line'].stderr!r}")
+            self.assertNotIn("Traceback", done["line"].stderr, rel)
+            path.rmdir()
+
     def test_no_aec_importable_gets_its_own_message(self):
+        # Probe the way the launcher does (from /, PYTHONPATH cleared): an installed aec of any version makes
+        # the missing-install path unreachable, so skip rather than read its "old aec" diagnostic as a failure.
+        probe = subprocess.run(["python3", "-c",
+                                "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('aec') else 1)"],
+                               cwd="/", env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
+                               capture_output=True)
+        if probe.returncode == 0:
+            self.skipTest("an aec is installed for the launcher's python3; the missing-install path is not reachable")
         done = self._run(HOOK_LINE_COMMAND, pythonpath=None)
-        if done.returncode == 0:
-            self.skipTest("an aec is installed in this interpreter; the missing-install path is not reachable")
         self.assertEqual(done.returncode, 1, done.stderr)
         self.assertIn("no aec is importable", done.stderr)
 
