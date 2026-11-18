@@ -17,7 +17,8 @@ offline none of them establishes which commit CI installs.
 
 The local version is the commit this aec was pip-installed from (PEP 610 direct_url.json) or, for a clean
 source checkout of Telosmith, its HEAD (AEC-R-pin-check-local-identity@1). A checkout is clean only when no
-tracked file is modified (staged or not) and no non-ignored untracked file exists (AEC-R-pin-check-source-clean@1).
+tracked file is modified (staged or not), no non-ignored untracked file exists (AEC-R-pin-check-source-clean@1),
+and no ignored file inside the package has an importable suffix outside `__pycache__` (Kate, round 5).
 Anything else (an index wheel, a dirty checkout, a copy vendored elsewhere) is indeterminate, and indeterminate
 fails. The pass condition is exact equality of the two 40-character commits. Standard library only; offline.
 """
@@ -27,7 +28,9 @@ import json
 import re
 from pathlib import Path
 
-PIN_RE = re.compile(r"github\.com/eraevous/Telosmith(?:\.git)?@([A-Za-z0-9._/-]+)")
+# The whole revision, up to whitespace, a quote or pip's `#egg=` fragment. Capturing only a SHA-shaped prefix would
+# let `@<sha>+hotfix` (a valid branch name) pass as the SHA (Codex P2 on #90, 5b8ef40).
+PIN_RE = re.compile(r"github\.com/eraevous/Telosmith(?:\.git)?@([^\s\"'#]+)")
 UPSTREAM_FILE = Path("tools") / "aec_upstream.json"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 
@@ -78,8 +81,9 @@ def _dirty(pkg: Path) -> bool:
     """True when the checkout holding pkg has a staged or unstaged change to a tracked file, or a non-ignored
     untracked file, anywhere in the checkout, or when git cannot say (AEC-R-pin-check-source-clean@1, Kate).
     An untracked module can shadow a committed one (an untracked `aec/records/__init__.py` beats `records.py`;
-    Codex P2 on #90). Ignored files (build artefacts, bytecode caches) do not count: that record puts
-    inspecting them out of scope."""
+    Codex P2 on #90). Ignored files count only when they are importable from inside the package (Kate, round 5
+    on #90): a suffix the running interpreter imports (source, bytecode or native extension), outside
+    `__pycache__`. Other ignored artefacts do not count. Nothing is deleted or changed."""
     import subprocess
     try:
         out = subprocess.run(["git", "-C", str(pkg), "status", "--porcelain=v1", "-z", "--untracked-files=all",
@@ -87,7 +91,38 @@ def _dirty(pkg: Path) -> bool:
                              capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return True
-    return bool(out.returncode or out.stdout.strip("\0"))
+    if out.returncode or out.stdout.strip("\0"):
+        return True
+    return bool(_ignored_importables(pkg))
+
+
+def _ignored_importables(pkg: Path) -> list[str]:
+    """Ignored files under pkg that the interpreter could import ahead of, or beside, committed code: an ignored
+    `records.so` or a sourceless `records.pyc` beside a deleted `records.py` both import. Files under `__pycache__`
+    are left out: CPython loads a cached `.pyc` only for a source file that exists, and checks it against that
+    source, so a cache cannot supply a module the checkout lacks (open question to Kate, round 6). Raises nothing:
+    when git cannot list ignored files, the result is a sentinel entry, so the checkout counts as dirty."""
+    import importlib.machinery
+    import subprocess
+    suffixes = tuple(importlib.machinery.all_suffixes())
+    try:
+        out = subprocess.run(["git", "-C", str(pkg), "status", "--porcelain=v1", "-z", "--ignored=traditional",
+                              "--untracked-files=all", "--", "."],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ["<git status failed>"]
+    if out.returncode:
+        return ["<git status failed>"]
+    found = []
+    for entry in out.stdout.split("\0"):
+        if not entry.startswith("!! "):
+            continue
+        path = entry[3:]
+        if "__pycache__" in Path(path).parts:
+            continue
+        if path.endswith(suffixes):
+            found.append(path)
+    return found
 
 
 _UNSET = object()
