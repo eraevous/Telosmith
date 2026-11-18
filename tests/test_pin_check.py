@@ -81,8 +81,31 @@ class PinCheck(unittest.TestCase):
             pin.check(repo("v0.6.0"), local())
 
     def test_unpinned_main_fails(self):
-        with self.assertRaisesRegex(pin.PinError, "not a commit"):
+        with self.assertRaisesRegex(pin.PinError, "mutable ref"):
             pin.check(repo("main"), local(requested=None))
+
+    def test_branch_ref_fails_even_when_requested_matches(self):
+        # Codex P2 on #90: requested_revision records the ref asked for, not what it points at today.
+        for ref in ("main", "aec/pin-check", "release"):
+            with self.assertRaisesRegex(pin.PinError, "mutable ref"):
+                pin.check(repo(ref), local(requested=ref))
+
+    def test_untracked_module_makes_checkout_unclean(self):
+        # Codex P2 on #90: an untracked package can shadow a committed module, so it is not a clean checkout.
+        d = Path(tempfile.mkdtemp())
+        run = lambda *a: subprocess.run(["git", "-C", str(d), *a], capture_output=True, check=True)  # noqa: E731
+        run("init", "-q")
+        (d / "aec").mkdir()
+        (d / "aec" / "records.py").write_text("")
+        run("add", ".")
+        run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
+        self.assertFalse(pin._untracked(d / "aec"))
+        (d / "aec" / "__pycache__").mkdir()
+        (d / "aec" / "__pycache__" / "records.cpython-312.pyc").write_bytes(b"")
+        self.assertFalse(pin._untracked(d / "aec"))
+        (d / "aec" / "records").mkdir()
+        (d / "aec" / "records" / "__init__.py").write_text("")
+        self.assertTrue(pin._untracked(d / "aec"))
 
     def test_cli_exit_codes(self):
         err = io.StringIO()

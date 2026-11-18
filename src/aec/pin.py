@@ -26,6 +26,9 @@ from pathlib import Path
 PIN_RE = re.compile(r"github\.com/eraevous/Telosmith(?:\.git)?@([A-Za-z0-9._/-]+)")
 UPSTREAM_FILE = Path("tools") / "aec_upstream.json"
 SHA_RE = re.compile(r"[0-9a-f]{7,40}")
+# A release tag (v1.2 or v1.2.3, optional pre-release suffix). Any other non-commit ref, such as `main` or a
+# branch, is mutable: two installs that both requested it can hold different commits (Codex P2 on #90).
+TAG_RE = re.compile(r"v\d+(?:\.\d+){1,2}(?:[-.]?[0-9A-Za-z.]+)?")
 
 
 class PinError(Exception):
@@ -72,9 +75,25 @@ def local_version() -> dict | None:
             pass
         return {"commit": sha, "requested": requested, "how": "pip install from git"}
     found = _checkout_commit(pkg)
-    if found and not found[1]:
+    if found and not found[1] and not _untracked(pkg):
         return {"commit": found[0], "requested": None, "how": "clean source checkout"}
     return None
+
+
+def _untracked(pkg: Path) -> bool:
+    """True when the package directory holds an untracked file (other than bytecode caches) or git cannot say.
+    An untracked module can shadow a committed one (an untracked `aec/records/__init__.py` beats `records.py`),
+    so a checkout is clean for the pin check only when nothing untracked could be imported (Codex P2 on #90)."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", str(pkg), "ls-files", "--others", "-z", "--", "."],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if out.returncode:
+        return True
+    return any(f and "__pycache__/" not in f and not f.endswith((".pyc", ".pyo"))
+               for f in out.stdout.split("\0"))
 
 
 _UNSET = object()
@@ -99,9 +118,12 @@ def check(root, local=_UNSET) -> str:
         if commit.startswith(ref):
             return f"local aec {commit[:12]} ({local['how']}) matches the CI pin {ref[:12]}"
         raise PinError(f"local aec is {commit[:12]} ({local['how']}) but CI pins {ref[:12]} ({pins[0][0]})")
+    if not TAG_RE.fullmatch(ref):
+        raise PinError(f"CI pins {ref!r} ({pins[0][0]}), a mutable ref (not a commit or a release tag): what it "
+                       f"installs changes over time, so equality cannot be established; pin a commit instead")
     if requested and requested == ref:
         return f"local aec was installed from {ref} ({commit[:12]}), the CI pin"
-    raise PinError(f"CI pins {ref!r} ({pins[0][0]}), which is not a commit, and the local aec ({commit[:12]}, "
+    raise PinError(f"CI pins {ref!r} ({pins[0][0]}), a release tag, and the local aec ({commit[:12]}, "
                    f"{local['how']}) was not installed from that ref; equality cannot be established offline")
 
 
