@@ -15,7 +15,7 @@
   python -m aec speckit derive FEATURE_DIR [--check] [--insert] [--constitution FILE]  regenerate record-derived spec blocks
   aec hook install|uninstall|print [--settings FILE] | verify [--pin D]  user-level Claude hook (draft, DEC-223)
   aec hook project PROJECT  the hook body the one-line project hook calls (init --hook-style line)
-  aec pin-check [ROOT]  exit 0 only when the local aec equals the Telosmith version CI pins (else 1, with why)
+  aec pin-check [ROOT]  exit 0 only when the installed aec equals the commit in tools/aec_upstream.json (else 1, with why)
   python -m aec speckit drift PATH... [--all] [--json]         spec/record drift, both directions (writes nothing)
 """
 from __future__ import annotations
