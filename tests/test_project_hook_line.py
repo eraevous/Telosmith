@@ -46,15 +46,25 @@ class SideBySide(unittest.TestCase):
         self._git("add", "-A")
         self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg)
 
-    def _run(self, command, pythonpath=SRC):
-        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(self.project))
+    def _run(self, command, pythonpath=SRC, project=None):
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project or self.project))
         env.pop("PYTHONPATH", None)
         if pythonpath is not None:
             env["PYTHONPATH"] = pythonpath
         return subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True, timeout=120)
 
     def _both(self):
-        return {name: self._run(cmd) for name, cmd in FORMS.items()}
+        # Each form runs on its own restored copy of the checkout, so one form's outputs can't shape the other's
+        # result (Kate, AEC-R-hook-project-parity@1). Symlinks are copied as links, pointing where they did.
+        done = {}
+        for name, cmd in FORMS.items():
+            copy = pathlib.Path(self._dirs[0].name + "-" + name)
+            shutil.copytree(self.project, copy, symlinks=True)
+            try:
+                done[name] = self._run(cmd, project=copy)
+            finally:
+                shutil.rmtree(copy)
+        return done
 
     def assertSameExit(self, expected):
         done = self._both()
@@ -94,6 +104,42 @@ class SideBySide(unittest.TestCase):
             done = self.assertSameExit(2)
             self.assertTrue(all("symlink" in d.stderr for d in done.values()), rel)
             self.assertEqual(victim.read_text(), "keep\n")
+            path.unlink()
+
+    def test_symlinked_aec_dir_and_records_are_refused_by_both(self):
+        # .aec itself and the records file, each separately; nothing behind the link is written.
+        aec = self.project / ".aec"
+        shutil.copytree(aec, self.outside / "aec-real")
+        before = {f.name: f.read_bytes() for f in (self.outside / "aec-real").iterdir() if f.is_file()}
+        shutil.rmtree(aec)
+        aec.symlink_to(self.outside / "aec-real")
+        done = self.assertSameExit(2)
+        self.assertTrue(all("symlink" in d.stderr for d in done.values()))
+        after = {f.name: f.read_bytes() for f in (self.outside / "aec-real").iterdir() if f.is_file()}
+        self.assertEqual(after, before)
+        aec.unlink()
+        shutil.copytree(self.outside / "aec-real", aec)
+
+        records = aec / "records.jsonl"
+        real = self.outside / "records.jsonl"
+        real.write_bytes(records.read_bytes())
+        records.unlink()
+        records.symlink_to(real)
+        kept = real.read_bytes()
+        done = self.assertSameExit(2)
+        self.assertTrue(all("symlink" in d.stderr for d in done.values()))
+        self.assertEqual(real.read_bytes(), kept)
+
+    def test_dangling_output_links_are_refused_and_never_created(self):
+        for rel in (".aec/edges.jsonl", ".aec/hook-before.jsonl"):
+            target = self.outside / ("missing-" + rel.replace("/", "_"))
+            path = self.project / rel
+            if os.path.lexists(path):
+                path.unlink()
+            path.symlink_to(target)
+            done = self.assertSameExit(2)
+            self.assertTrue(all("symlink" in d.stderr for d in done.values()), rel)
+            self.assertFalse(os.path.lexists(target), rel)
             path.unlink()
 
     def test_no_aec_importable_gets_its_own_message(self):
