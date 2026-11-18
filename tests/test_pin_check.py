@@ -222,6 +222,17 @@ class PinCheck(unittest.TestCase):
         with self.assertRaisesRegex(pin.PinError, "aec.yml:2 .*without a static"):
             pin.check(d, local())
 
+    def test_display_text_is_not_a_pin(self):
+        # Codex P2 on ec563ad: a workflow or step name mentioning an older pin is not an install.
+        d = repo(SHA)
+        text = (d / ".github" / "workflows" / "aec.yml").read_text()
+        (d / ".github" / "workflows" / "aec.yml").write_text(
+            f"name: Telosmith git+https://github.com/eraevous/Telosmith.git@{OTHER}\n" + text
+            + f"      - name: Replaces git+https://github.com/eraevous/Telosmith.git@{OTHER}\n"
+            + "        description: was git+https://github.com/eraevous/Telosmith.git\n"
+            + f'        run: pip install "git+https://github.com/eraevous/Telosmith.git@{SHA}"\n')
+        self.assertIn("matches", pin.check(d, local()))
+
     def test_comment_alone_is_no_pin(self):
         d = repo()
         (d / ".github" / "workflows").mkdir(parents=True)

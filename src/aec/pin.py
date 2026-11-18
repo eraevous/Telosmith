@@ -22,7 +22,14 @@ and no ignored file inside the package can run in place of the pinned source: an
 bytecode cache for this interpreter (AEC-R-pin-check-source-clean@2; Codex security P2). In practice a source
 checkout qualifies only when run with bytecode writing off (python -B) and no caches present.
 Anything else (an index wheel, a dirty checkout, a copy vendored elsewhere) is indeterminate, and indeterminate
-fails. The pass condition is exact equality of the two 40-character commits. Standard library only; offline.
+fails.
+
+Trust limit (Codex security P2 on #90, ec563ad): the check runs inside the aec it checks. Code that can write the
+checkout before aec starts (an ignored package directory such as `aec/records/` shadowing `records.py`, which
+`python -m aec` imports at startup) runs before this module does and can forge its answer. Tampering with the
+installation is outside Kate's AEC-R-pin-check-local-identity@1 ("verifying installed file contents ... or package
+provenance authenticity"); a defence has to verify from outside the checkout, before importing it (the line
+launcher, propagation D step 3), not from in here. The pass condition is exact equality of the two 40-character commits. Standard library only; offline.
 """
 from __future__ import annotations
 
@@ -45,18 +52,23 @@ class PinError(Exception):
 COMMENT_RE = re.compile(r"(^|\s)#.*$")
 TELOSMITH_GIT_RE = re.compile(r"eraevous/Telosmith\.git|git\+\S*eraevous/Telosmith", re.IGNORECASE)
 PIP_INSTALL_RE = re.compile(r"\bpip3?\s+install\b|\bpython3?\s+-m\s+pip\s+install\b")
+# A workflow's or step's `name:` / `description:` is display text GitHub never executes, so a Telosmith URL there
+# is not an install (Codex P2 on #90, ec563ad: a step named "Replaces ...@<old-sha>" made the pins disagree).
+DISPLAY_KEY_RE = re.compile(r"^\s*(?:-\s+)?(?:name|description)\s*:")
 
 
 def _workflow_pins(text: str, where: str) -> list[str]:
     """Pins from the executable part of one workflow file (Codex security P2 on #90, 11af34e).
 
-    Comments are dropped first, so a pinned SHA in a comment cannot stand in for what CI installs. Then any
+    Comments and display text (`name:`, `description:` lines) are dropped first, so a pinned SHA in a comment cannot stand in for what CI installs. Then any
     remaining line that names Telosmith's git URL without a static `@<rev>` (an unpinned URL, or one kept in a
     variable), or a pip install whose target is built from a variable (`$`), cannot be read offline and fails:
     pin-check accepts only static, textual pins and refuses the rest rather than guessing."""
     pins: list[str] = []
     for n, raw in enumerate(text.splitlines(), 1):
         line = COMMENT_RE.sub("", raw)
+        if DISPLAY_KEY_RE.match(line):
+            continue
         found = PIN_RE.findall(line)
         pins.extend(found)
         rest = PIN_RE.sub("", line)
