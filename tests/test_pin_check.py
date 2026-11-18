@@ -5,7 +5,9 @@ a missing or unreadable pin, and an indeterminate local version fail (exit 1, wi
 records add: AEC-R-pin-check-consensus@1 (full 40-character commit pins only; abbreviated, tag and `main` pins
 fail; a conflicting second pin is never ignored), AEC-R-pin-check-local-identity@1 (exact commit equality; a
 matching requested tag is not enough) and AEC-R-pin-check-source-clean@1 (staged, unstaged and non-ignored
-untracked files make a checkout dirty; ignored artefacts alone do not). Wiring the check
+untracked files make a checkout dirty; ignored artefacts alone do not). Her round-6 AEC-R-pin-check-source-clean@2
+adds ignored importables and this interpreter's bytecode caches; Codex's security review of 11af34e adds that
+commented pins are not read and variable-built installs fail. Wiring the check
 into the line launcher, and "a blocked replacement leaves settings unchanged", belong to the PR that does the
 wiring, after Telosmith#89 merges.
 """
@@ -130,7 +132,8 @@ class PinCheck(unittest.TestCase):
     def test_ignored_artefacts_alone_do_not_make_checkout_dirty(self):
         d, _ = git_repo()
         (d / "aec" / "__pycache__").mkdir()
-        (d / "aec" / "__pycache__" / "records.cpython-312.pyc").write_bytes(b"")
+        # A cache for another interpreter's tag cannot be loaded by this one (AEC-R-pin-check-source-clean@2).
+        (d / "aec" / "__pycache__" / "records.cpython-29.pyc").write_bytes(b"")
         (d / "build").mkdir()
         (d / "build" / "out.txt").write_text("x")
         self.assertFalse(pin._dirty(d / "aec"))
@@ -175,6 +178,72 @@ class PinCheck(unittest.TestCase):
         d, _ = git_repo()
         (d / "notes.txt").write_text("x")
         self.assertTrue(pin._dirty(d / "aec"))
+
+    def test_bytecode_cache_for_this_interpreter_makes_checkout_dirty(self):
+        # Kate's AEC-R-pin-check-source-clean@2 and Codex security P2 on 11af34e: an existing cache can load in
+        # place of its source (same mtime and size, or an unchecked-hash pyc), so it fails, naming the path,
+        # and the check leaves it in place.
+        tag = sys.implementation.cache_tag
+        for name in (f"records.{tag}.pyc", f"records.{tag}.opt-1.pyc"):
+            d, _ = git_repo()
+            f = d / "aec" / "__pycache__" / name
+            f.parent.mkdir()
+            f.write_bytes(b"x")
+            why = pin._dirty(d / "aec")
+            self.assertTrue(why, name)
+            self.assertIn(f"aec/__pycache__/{name}", why)
+            self.assertIn("PYTHONDONTWRITEBYTECODE", why)
+            self.assertEqual(f.read_bytes(), b"x")
+
+    def test_pycache_prefix_is_unsupported(self):
+        # With a cache prefix, caches live outside the checkout, where the check cannot inspect them.
+        d, _ = git_repo()
+        saved = sys.pycache_prefix
+        sys.pycache_prefix = str(d / "elsewhere")
+        try:
+            self.assertIn("pycache_prefix", pin._dirty(d / "aec"))
+        finally:
+            sys.pycache_prefix = saved
+
+    def test_dirty_reason_names_the_path(self):
+        d, _ = git_repo()
+        (d / "notes.txt").write_text("x")
+        self.assertIn("notes.txt", pin._dirty(d / "aec"))
+
+    def test_commented_pin_is_not_read(self):
+        # Codex security P2 on 11af34e: a comment holding the pinned SHA must not stand in for an executed
+        # install of a mutable ref kept in a variable.
+        d = repo()
+        (d / ".github" / "workflows").mkdir(parents=True)
+        (d / ".github" / "workflows" / "aec.yml").write_text(
+            "env:\n  AEC_URL: git+https://github.com/eraevous/Telosmith.git\njobs:\n  aec:\n    steps:\n"
+            f"      # pinned: git+https://github.com/eraevous/Telosmith.git@{SHA}\n"
+            '      - run: pip install "$AEC_URL@main"\n')
+        with self.assertRaisesRegex(pin.PinError, "aec.yml:2 .*without a static"):
+            pin.check(d, local())
+
+    def test_comment_alone_is_no_pin(self):
+        d = repo()
+        (d / ".github" / "workflows").mkdir(parents=True)
+        (d / ".github" / "workflows" / "aec.yml").write_text(
+            f"# git+https://github.com/eraevous/Telosmith.git@{SHA}\njobs: {{}}\n")
+        with self.assertRaisesRegex(pin.PinError, "no Telosmith pin"):
+            pin.check(d, local())
+
+    def test_install_from_variable_fails(self):
+        for line in ('pip install "$AEC_URL@main"', "python -m pip install ${{ vars.AEC }}@main",
+                     'pip install "git+$TELOSMITH"'):
+            d = repo(SHA)
+            with open(d / ".github" / "workflows" / "aec.yml", "a") as f:
+                f.write(f"      - run: {line}\n")
+            with self.assertRaisesRegex(pin.PinError, "variable|static", msg=line):
+                pin.check(d, local())
+
+    def test_unrelated_variables_in_pip_lines_pass(self):
+        d = repo(SHA)
+        with open(d / ".github" / "workflows" / "aec.yml", "a") as f:
+            f.write('      - run: pip install -r "$GITHUB_WORKSPACE/requirements.txt"\n')
+        self.assertIn("matches", pin.check(d, local()))
 
     def test_cli_exit_codes(self):
         err = io.StringIO()
