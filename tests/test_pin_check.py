@@ -1,7 +1,11 @@
 """`aec pin-check` (src/aec/pin.py): the equality check AEC-R-hook-line-pin-gate@1 asks the line hook to enforce.
 
 Kate's test lines for that record, as far as they concern the check itself: matching versions pass; a mismatch,
-a missing or unreadable pin, and an indeterminate local version fail (exit 1, with a diagnostic). Wiring the check
+a missing or unreadable pin, and an indeterminate local version fail (exit 1, with a diagnostic). Her round-4
+records add: AEC-R-pin-check-consensus@1 (full 40-character commit pins only; abbreviated, tag and `main` pins
+fail; a conflicting second pin is never ignored), AEC-R-pin-check-local-identity@1 (exact commit equality; a
+matching requested tag is not enough) and AEC-R-pin-check-source-clean@1 (staged, unstaged and non-ignored
+untracked files make a checkout dirty; ignored artefacts alone do not). Wiring the check
 into the line launcher, and "a blocked replacement leaves settings unchanged", belong to the PR that does the
 wiring, after Telosmith#89 merges.
 """
@@ -36,16 +40,32 @@ def repo(workflow_ref=None, upstream=None, raw_upstream=None):
     return d
 
 
-def local(commit=SHA, requested=None):
-    return {"commit": commit, "requested": requested, "how": "test"}
+def local(commit=SHA):
+    return {"commit": commit, "how": "test"}
+
+
+def git_repo():
+    d = Path(tempfile.mkdtemp())
+    run = lambda *a: subprocess.run(["git", "-C", str(d), *a], capture_output=True, check=True)  # noqa: E731
+    run("init", "-q")
+    (d / ".gitignore").write_text("build/\n__pycache__/\n")
+    (d / "aec").mkdir()
+    (d / "aec" / "records.py").write_text("")
+    run("add", ".")
+    run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
+    return d, run
 
 
 class PinCheck(unittest.TestCase):
     def test_matching_commit_passes(self):
         self.assertIn("matches", pin.check(repo(SHA), local()))
 
-    def test_short_pin_prefix_passes(self):
-        self.assertIn("matches", pin.check(repo(SHA[:12]), local()))
+    def test_abbreviated_pin_fails(self):
+        # AEC-R-pin-check-consensus@1: offline, a prefix does not establish repository-wide uniqueness.
+        for where in ("workflow", "upstream"):
+            d = repo(SHA[:12]) if where == "workflow" else repo(upstream=SHA[:12])
+            with self.assertRaisesRegex(pin.PinError, "abbreviated commit"):
+                pin.check(d, local())
 
     def test_both_pin_sources_agreeing_pass(self):
         self.assertIn("matches", pin.check(repo(SHA, upstream=SHA), local()))
@@ -60,6 +80,13 @@ class PinCheck(unittest.TestCase):
     def test_pins_that_disagree_fail(self):
         with self.assertRaisesRegex(pin.PinError, "pins disagree"):
             pin.check(repo(SHA, upstream=OTHER), local())
+        # A conflicting second pin is not ignored, whichever pin the local aec matches.
+        with self.assertRaisesRegex(pin.PinError, "pins disagree"):
+            pin.check(repo(SHA, upstream=OTHER), local(OTHER))
+
+    def test_malformed_second_pin_is_not_ignored(self):
+        with self.assertRaisesRegex(pin.PinError, "not a commit"):
+            pin.check(repo(SHA, upstream="v0.6.0"), local())
 
     def test_missing_pin_fails(self):
         with self.assertRaisesRegex(pin.PinError, "no Telosmith pin"):
@@ -75,37 +102,51 @@ class PinCheck(unittest.TestCase):
         with self.assertRaisesRegex(pin.PinError, "indeterminate"):
             pin.check(repo(SHA), None)
 
-    def test_tag_pin_needs_matching_requested_revision(self):
-        self.assertIn("installed from v0.6.0", pin.check(repo("v0.6.0"), local(requested="v0.6.0")))
-        with self.assertRaisesRegex(pin.PinError, "cannot be established offline"):
-            pin.check(repo("v0.6.0"), local())
+    def test_tag_pin_fails_even_with_matching_requested_revision(self):
+        # AEC-R-pin-check-local-identity@1: a recorded requested tag does not establish commit equality.
+        for ref in ("v0.6.0", "v1.2"):
+            with self.assertRaisesRegex(pin.PinError, "not a commit"):
+                pin.check(repo(ref), dict(local(), requested=ref))
 
-    def test_unpinned_main_fails(self):
-        with self.assertRaisesRegex(pin.PinError, "mutable ref"):
-            pin.check(repo("main"), local(requested=None))
-
-    def test_branch_ref_fails_even_when_requested_matches(self):
-        # Codex P2 on #90: requested_revision records the ref asked for, not what it points at today.
+    def test_branch_pins_fail(self):
+        # Codex P2 on #90, then AEC-R-pin-check-consensus@1: main or any branch is mutable.
         for ref in ("main", "aec/pin-check", "release"):
-            with self.assertRaisesRegex(pin.PinError, "mutable ref"):
-                pin.check(repo(ref), local(requested=ref))
+            with self.assertRaisesRegex(pin.PinError, "not a commit"):
+                pin.check(repo(ref), local())
 
-    def test_untracked_module_makes_checkout_unclean(self):
-        # Codex P2 on #90: an untracked package can shadow a committed module, so it is not a clean checkout.
-        d = Path(tempfile.mkdtemp())
-        run = lambda *a: subprocess.run(["git", "-C", str(d), *a], capture_output=True, check=True)  # noqa: E731
-        run("init", "-q")
-        (d / "aec").mkdir()
-        (d / "aec" / "records.py").write_text("")
-        run("add", ".")
-        run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
-        self.assertFalse(pin._untracked(d / "aec"))
+    def test_clean_checkout_is_not_dirty(self):
+        d, _ = git_repo()
+        self.assertFalse(pin._dirty(d / "aec"))
+
+    def test_ignored_artefacts_alone_do_not_make_checkout_dirty(self):
+        d, _ = git_repo()
         (d / "aec" / "__pycache__").mkdir()
         (d / "aec" / "__pycache__" / "records.cpython-312.pyc").write_bytes(b"")
-        self.assertFalse(pin._untracked(d / "aec"))
+        (d / "build").mkdir()
+        (d / "build" / "out.txt").write_text("x")
+        self.assertFalse(pin._dirty(d / "aec"))
+
+    def test_unstaged_change_makes_checkout_dirty(self):
+        d, _ = git_repo()
+        (d / "aec" / "records.py").write_text("x = 1\n")
+        self.assertTrue(pin._dirty(d / "aec"))
+
+    def test_staged_change_makes_checkout_dirty(self):
+        d, run = git_repo()
+        (d / "aec" / "records.py").write_text("x = 1\n")
+        run("add", "aec/records.py")
+        self.assertTrue(pin._dirty(d / "aec"))
+
+    def test_untracked_files_make_checkout_dirty(self):
+        # Codex P2 on #90: an untracked package can shadow a committed module. Kate's source-clean record
+        # extends this to any non-ignored untracked file in the checkout.
+        d, _ = git_repo()
         (d / "aec" / "records").mkdir()
         (d / "aec" / "records" / "__init__.py").write_text("")
-        self.assertTrue(pin._untracked(d / "aec"))
+        self.assertTrue(pin._dirty(d / "aec"))
+        d, _ = git_repo()
+        (d / "notes.txt").write_text("x")
+        self.assertTrue(pin._dirty(d / "aec"))
 
     def test_cli_exit_codes(self):
         err = io.StringIO()
