@@ -134,6 +134,16 @@ blocking condition):
 
 The enforcement policy stays advisory.
 
+**Status of D (opt-in step, `aec init --hook-style line`):** the body ships as `aec hook project`; the line keeps only
+the launcher and two diagnostics. Against the gates above:
+- pinned local resolution: **not met**. The line runs whichever aec the launcher resolves, as the inline hook does;
+- missing-install and too-old diagnostics: met for "no aec importable" and "aec without `hook project`"; a mismatch
+  with CI's pin is not detected (same gap as the first gate);
+- compatibility: `tests/test_project_hook_line.py` runs both hooks on the same checkouts and compares exit codes;
+- rollback: `aec init --hooks --hook-style inline` in an empty directory gives the inline snippet to copy back.
+
+So `inline` stays the default and no repository's hook is replaced until the first gate is met.
+
 Until D lands (it changes `aec init` output and is its own PR), the handoff's interim applies: propagate the method via
 the lane-rules change and one Telosmith release pin.
 

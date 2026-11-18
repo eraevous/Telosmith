@@ -5,6 +5,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Added (opt-in, AEC-D-braided-dcc@1 propagation D)
+- `aec init --hook-style line` writes a one-line project hook: a launcher that calls `aec hook project`, the hook
+  body now shipped in the package, so a fix to the body reaches every repository with a Telosmith upgrade instead
+  of a settings edit per repository. Same steps and exit codes as the inline hook (side-by-side tests), plus
+  messages for "no aec importable" and "aec too old for the line". `inline` stays the default: the line does not
+  yet check that the local aec is the version CI pins, one of the gates in `docs/integrations/braided-dcc.md`.
+
 ### Added
 - `aec pin-check [ROOT]`: exits 0 only when the local aec equals the Telosmith version the repository's CI pins
   (workflow `pip install "git+…Telosmith.git@<ref>"` lines and `tools/aec_upstream.json`), and 1 with the reason
