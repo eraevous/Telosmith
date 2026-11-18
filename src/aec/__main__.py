@@ -14,6 +14,7 @@
   python -m aec source search PATTERN [--root R] [--regex]   direct fallback source search (offline)
   python -m aec speckit derive FEATURE_DIR [--check] [--insert] [--constitution FILE]  regenerate record-derived spec blocks
   aec hook install|uninstall|print [--settings FILE] | verify [--pin D]  user-level Claude hook (draft, DEC-223)
+  aec hook project PROJECT  the hook body the one-line project hook calls (init --hook-style line)
   python -m aec speckit drift PATH... [--all] [--json]         spec/record drift, both directions (writes nothing)
 """
 from __future__ import annotations
@@ -99,6 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
     hk.add_argument("--no-hooks", dest="hooks", action="store_const", const=False,
                     help="do not write them (default: written only when ROOT has Python code)")
     it.add_argument("--ci-name", default="aec", help="CI workflow, job and file name (default: aec)")
+    it.add_argument("--hook-style", choices=("inline", "line"), default="inline",
+                    help="inline: the whole hook body in the settings snippet (default); line: a short launcher "
+                         "that calls `aec hook project`, so the body updates with the installed package")
     anc = sub.add_parser("anchor", help="print a checked anchor (sha256 + locator) for a passage, as JSON")
     anc.add_argument("spec", metavar="[ALIAS=]PATH#LOCATOR")
     anc.add_argument("--rationale", action="store_true", help='for: "rationale" (default: "text")')
@@ -247,7 +251,8 @@ def _cmd_init(a, ap) -> int:
     from .init import init
     try:
         rep = init(a.root, owner=a.owner or _git_user(a.root) or "owner", purpose=a.purpose,
-                   purpose_anchor=a.purpose_anchor, hooks=a.hooks, ci_name=a.ci_name)
+                   purpose_anchor=a.purpose_anchor, hooks=a.hooks, ci_name=a.ci_name,
+                   hook_style=a.hook_style)
     except ValueError as error:
         ap.error(str(error))
     for f in rep["created"]:

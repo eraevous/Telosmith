@@ -14,7 +14,8 @@ What this module gives on top of the project-level snippet from `aec init`:
   files still match pip's RECORD, and that RECORD still matches the digest pinned at install time. On any
   mismatch it refuses and says why.
 
-Subcommands: `print`, `install`, `uninstall`, `verify`, `run` (what the hook calls). Standard library only.
+Subcommands: `print`, `install`, `uninstall`, `verify`, `run` (what the hook calls), and `project` (the same
+body for the one-line project-level hook from `aec init --hook-style line`; no RECORD check). Standard library only.
 """
 from __future__ import annotations
 
@@ -225,6 +226,22 @@ def run(project: str, pin: str | None) -> int:
     except Refused as exc:
         print(f"Telosmith hook refused to run: {exc}", file=sys.stderr)
         return REFUSED
+    return body(project)
+
+
+def project_run(project: str) -> int:
+    """`aec hook project`: the body the one-line project hook calls (AEC-D-braided-dcc@1, propagation D).
+
+    No RECORD verification: like the inline snippet it replaces, the project hook trusts whichever aec the
+    launcher in the settings line resolved (PYTHONPATH filtered, started from /). It keeps the inline snippet's
+    one stricter rule: a symlink at either output is refused, not replaced, so both forms exit the same way on
+    the same checkout (tests/test_project_hook_line.py runs them side by side)."""
+    return body(project, refuse_output_links=True)
+
+
+def body(project: str, *, refuse_output_links: bool = False) -> int:
+    """Steps and exit codes shared by the user-level and project-level hooks: 0 nothing to say, 1 a step could
+    not run, 2 a report for the agent (PostToolUse: the edit already happened; nothing is blocked)."""
     p = Path(project)
     if not p.is_absolute():
         print("Telosmith hook: project path must be absolute", file=sys.stderr)
@@ -238,7 +255,8 @@ def run(project: str, pin: str | None) -> int:
     # overwrite any file the user owns (Codex security review on #79). Refuse a symlinked .aec or records file,
     # and write each output to a fresh file inside .aec, then rename it over the destination: a rename replaces
     # a symlink there instead of following it.
-    for path in (aec_dir, Path(rec)):
+    links = (aec_dir, Path(rec)) + ((Path(edges), Path(before)) if refuse_output_links else ())
+    for path in links:
         if path.is_symlink():
             print(f"Telosmith hook refused to run: {path} is a symlink", file=sys.stderr)
             return REFUSED
@@ -334,11 +352,15 @@ def add_parser(sub) -> None:
     r = hs.add_parser("run", help="the hook body (called by the installed hook)")
     r.add_argument("project")
     r.add_argument("--pin")
+    pr = hs.add_parser("project", help="the hook body for the one-line project hook (aec init --hook-style line)")
+    pr.add_argument("project", help="absolute path of the checkout ($CLAUDE_PROJECT_DIR)")
 
 
 def cli(a, ap) -> int:
     if a.hook_cmd == "run":
         return run(a.project, a.pin)
+    if a.hook_cmd == "project":
+        return project_run(a.project)
     if a.hook_cmd == "verify":
         try:
             for line in verify(a.pin):
