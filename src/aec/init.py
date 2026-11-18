@@ -105,6 +105,36 @@ HOOK = {
     }
 }
 
+# One-line form (AEC-D-braided-dcc@1, propagation D; opt-in with `aec init --hook-style line`). The hook body
+# lives in the installed package (`aec hook project`, src/aec/userhook.py), so a fix to the body ships with a
+# Telosmith release and the settings text in each repository stays the same. What stays in the line is only what
+# must run before any aec is imported: the launcher above (which aec gets imported) and two diagnostics, one for
+# "no aec importable at all" and one for "an aec too old to have the body". Exit codes match HOOK_COMMAND:
+# 0 quiet, 1 a step could not run, 2 a report for the agent. Nothing blocks: PostToolUse runs after the edit.
+# Not yet the default. Kate's gates for replacing the inline hook (docs/integrations/braided-dcc.md) are not all
+# met: the line does not yet check that the local aec is the version CI pins.
+HOOK_LINE_COMMAND = (
+    "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; "
+    + HOOK_AEC +
+    "aec --version >/dev/null 2>&1 || "
+    "{ echo 'Telosmith hook: no aec is importable here; install Telosmith at the commit your CI job pins "
+    "(pip install \"" + AEC_SOURCE + "@<commit>\")' >&2; exit 1; }; "
+    "aec hook project --help >/dev/null 2>&1 || "
+    "{ echo \"Telosmith hook: the installed $(aec --version 2>&1) has no 'hook project'; install Telosmith "
+    "0.6.0 or later (the commit your CI job pins), or go back to the inline hook: aec init --hooks --hook-style inline\" >&2; exit 1; }; "
+    "aec hook project \"$P\""
+)
+
+HOOK_LINE = {
+    "hooks": {
+        "PostToolUse": [{
+            "matcher": "Edit|Write|MultiEdit",
+            "hooks": [{"type": "command", "command": HOOK_LINE_COMMAND, "timeout": 30}],
+        }]
+    }
+}
+HOOK_STYLES = {"inline": HOOK, "line": HOOK_LINE}
+
 # Report-only: compares the merge-base with this checkout and writes the report to the job summary, where a
 # reviewer sees it on the run page. Never fails the job (a code change is not an error).
 CI_IMPACT = """base=$(git merge-base "$AEC_BASE" HEAD 2>/dev/null) || base=""
@@ -261,19 +291,23 @@ def _records(owner: str, purpose: str | None = None, anchor: dict | None = None)
 
 
 def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_anchor: str | None = None,
-         hooks: bool | None = None, ci_name: str = "aec") -> dict:
+         hooks: bool | None = None, ci_name: str = "aec", hook_style: str = "inline") -> dict:
     """Scaffold .aec/ without overwriting anything.
 
     purpose: the text of P0@1 instead of the stub (still provisional: the owner commits it by appending P0@2).
     purpose_anchor: `PATH#LOCATOR` in ROOT that the purpose cites; hashed and checked now (DEC-095).
     hooks: write the Claude Code hook and CI snippets. None (default) writes them only when ROOT has Python
     code, since code-impact has nothing to report in a repository without it.
-    ci_name: the CI workflow's name, job id and file name (default `aec`)."""
+    ci_name: the CI workflow's name, job id and file name (default `aec`).
+    hook_style: `inline` (default) writes the whole hook body into the settings snippet; `line` writes a short
+    launcher that calls `aec hook project`, so the body updates with the installed package (opt-in)."""
     root = Path(root)
     aec = root / ".aec"
     created, kept = [], []
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", ci_name or ""):
         raise ValueError(f"--ci-name {ci_name!r}: use letters, digits, - and _ (it names a workflow file and a job)")
+    if hook_style not in HOOK_STYLES:
+        raise ValueError(f"--hook-style {hook_style!r}: use one of {', '.join(HOOK_STYLES)}")
     if purpose_anchor and not purpose:
         raise ValueError("--purpose-anchor needs --purpose: an anchor cites the text of a stated purpose")
     anchor = None
@@ -301,7 +335,7 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     put(".gitignore", lambda: GITIGNORE)
     ref, note = None, None
     if hooks:
-        put("snippets/claude-settings.json", lambda: json.dumps(HOOK, indent=2) + "\n")
+        put("snippets/claude-settings.json", lambda: json.dumps(HOOK_STYLES[hook_style], indent=2) + "\n")
         ref, note = resolve_install_ref(__version__, _installed_commit())
         put(f"snippets/{ci_name}-ci.yml", lambda: ci_snippet(ref, ci_name))
 
@@ -317,8 +351,13 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
                   f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml"
                   + (" (it pins @main: replace it with a commit SHA you have reviewed)."
                      if ref == "main" else "."),
-                  "The hook runs the aec installed in your environment: it needs `code-impact --exit-code` "
-                  f"(Telosmith 0.5.0 or later: pip install \"{AEC_SOURCE}@{ref}\")."]
+                  ("The hook runs the aec installed in your environment: it needs `code-impact --exit-code` "
+                   f"(Telosmith 0.5.0 or later: pip install \"{AEC_SOURCE}@{ref}\")."
+                   if hook_style == "inline" else
+                   "The one-line hook runs `aec hook project` from the aec installed in your environment "
+                   f"(pip install \"{AEC_SOURCE}@{ref}\"); a newer Telosmith updates the hook body without "
+                   "editing .claude/settings.json. To go back, run `aec init --hooks --hook-style inline` in an empty "
+                   "directory and copy its .aec/snippets/claude-settings.json over.")]
     else:
         steps.append("No hook or CI snippet written: " + ("this repository has no Python code, so code-impact has "
                      "nothing to report. Re-run `aec init --hooks` after adding code." if snapshot["header"]["files"] == 0
