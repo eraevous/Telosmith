@@ -253,15 +253,20 @@ class PinCheck(unittest.TestCase):
 
     def test_cli_on_this_checkout_compares_its_head(self):
         # This repository has no Telosmith pin of its own, so the CLI fails on "no pin" whatever the checkout's
-        # state; a pin at its own HEAD passes when the checkout is clean, and is indeterminate when it is dirty.
+        # state. A pin at its own HEAD passes when the checkout qualifies; when it doesn't (a change, or bytecode
+        # caches some earlier run wrote: AEC-R-pin-check-source-clean@2), the refusal carries the reason. No skip:
+        # either branch is asserted.
         root = Path(__file__).resolve().parents[1]
         head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-        found = pin.local_version()
-        if not head or found is None:
-            self.skipTest("not a clean source checkout")
-        self.assertEqual(found["commit"], head)
-        self.assertIn("matches", pin.check(repo(head)))
-
+        found, why = pin.local_identity()
+        if found is None:
+            self.assertTrue(why)
+            with self.assertRaisesRegex(pin.PinError, "indeterminate"):
+                pin.check(repo(head or SHA))
+            return
+        if found["how"] == "clean source checkout":
+            self.assertEqual(found["commit"], head)
+        self.assertIn("matches", pin.check(repo(found["commit"])))
 
 if __name__ == "__main__":
     unittest.main()
