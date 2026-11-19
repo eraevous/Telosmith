@@ -228,6 +228,65 @@ def resolve_install_ref(version: str = __version__, commit: str | None = None,
     return install_ref(version, commit), None
 
 
+class PinResolutionError(ValueError):
+    """`aec init` could not establish the full commit for the Telosmith revision it would pin."""
+
+
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def resolve_commit(rev: str, source: str = AEC_SOURCE, local: Path | None = None,
+                   timeout: float = 20) -> str:
+    """The full commit object ID for `rev`, or PinResolutionError (AEC-R-init-full-commit-pin@1).
+
+    A full 40-character commit is kept as given. An abbreviated commit is resolved only in `local`, a git
+    checkout of Telosmith, where `git rev-parse` refuses an ambiguous prefix and a non-commit object. A
+    branch or tag name is resolved with `git ls-remote` against `source`: an annotated tag gives its peeled
+    commit, never the tag object; a name that is both a tag and a branch on different commits is ambiguous.
+    Nothing is guessed: any other outcome (offline, no git, unknown name) raises with the reason."""
+    if not isinstance(rev, str) or not rev or rev.startswith("-") or any(c.isspace() for c in rev):
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: not a commit, branch or tag name")
+    if _FULL_SHA.fullmatch(rev):
+        return rev
+    if re.fullmatch(r"[0-9a-f]{4,39}", rev):
+        if local is None:
+            raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: an abbreviated commit can only "
+                                     "be resolved in a Telosmith checkout; give the full 40-character commit")
+        try:
+            out = subprocess.run(["git", "-C", str(local), "rev-parse", "--verify", "--quiet", "--end-of-options",
+                                  f"{rev}^{{commit}}"], capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: git failed ({error})") from None
+        sha = out.stdout.strip()
+        if out.returncode or not _FULL_SHA.fullmatch(sha):
+            raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: no single commit with that prefix "
+                                     f"in {local} (unknown, ambiguous or not a commit)")
+        return sha
+    url = source[4:] if source.startswith("git+") else source
+    try:
+        out = subprocess.run(["git", "ls-remote", "--", url, f"refs/tags/{rev}", f"refs/tags/{rev}^{{}}",
+                              f"refs/heads/{rev}"], capture_output=True, text=True, timeout=timeout,
+                             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    except (OSError, subprocess.SubprocessError) as error:
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: git ls-remote failed ({error})") from None
+    if out.returncode:
+        reason = (out.stderr.strip().splitlines() or ["no reason given"])[-1]
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: git ls-remote {url} failed ({reason})")
+    refs = {}
+    for line in out.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        if _FULL_SHA.fullmatch(sha):
+            refs[name] = sha
+    tag = refs.get(f"refs/tags/{rev}^{{}}") or refs.get(f"refs/tags/{rev}")
+    head = refs.get(f"refs/heads/{rev}")
+    if tag and head and tag != head:
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: it names both a tag ({tag[:12]}) and a "
+                                 f"branch ({head[:12]}); give the full commit")
+    if not (tag or head):
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: no tag or branch of that name at {url}")
+    return tag or head
+
+
 def __getattr__(name):  # CI is resolved on first use, not at import (resolving it may run git)
     if name == "CI":
         return ci_snippet(resolve_install_ref(__version__, _installed_commit())[0])
@@ -325,6 +384,17 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     snapshot = E.snapshot(root)
     if hooks is None:
         hooks = snapshot["header"]["files"] > 0
+    ref, note = None, None
+    if hooks:
+        # The snippet and the next steps name one full commit (AEC-R-init-full-commit-pin@1). A release tag or
+        # `main` is resolved now; if that fails, init stops here, before anything is written.
+        ref, note = resolve_install_ref(__version__, _installed_commit())
+        try:
+            ref = resolve_commit(ref)
+        except PinResolutionError as error:
+            raise PinResolutionError(f"{error}. Install Telosmith from git at a commit "
+                                     f"(pip install \"{AEC_SOURCE}@<commit>\") and run init again, or run it "
+                                     "with --no-hooks to skip the hook and CI snippets") from None
 
     def put(rel: str, make):
         p = aec / rel
@@ -340,10 +410,8 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     put("README.md", lambda: README)
     # v0.4.1: the snapshot is generated; committing it makes every pair of code-touching PRs conflict.
     put(".gitignore", lambda: GITIGNORE)
-    ref, note = None, None
     if hooks:
         put("snippets/claude-settings.json", lambda: json.dumps(HOOK_STYLES[hook_style], indent=2) + "\n")
-        ref, note = resolve_install_ref(__version__, _installed_commit())
         put(f"snippets/{ci_name}-ci.yml", lambda: ci_snippet(ref, ci_name))
 
     spec_kit = (root / ".specify").is_dir()
@@ -355,9 +423,8 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
         steps.append("Replace the purpose stub P0 in .aec/records.jsonl with your own statement (append version 2).")
     if hooks:
         steps += ["Copy .aec/snippets/claude-settings.json into .claude/settings.json (merge if one exists).",
-                  f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml"
-                  + (" (it pins @main: replace it with a commit SHA you have reviewed)."
-                     if ref == "main" else "."),
+                  f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml (it pins Telosmith "
+                  f"commit {ref}).",
                   ("The hook runs the aec installed in your environment: it needs `code-impact --exit-code` "
                    f"(Telosmith 0.5.0 or later: pip install \"{AEC_SOURCE}@{ref}\")."
                    if hook_style == "inline" else
