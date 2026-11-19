@@ -398,6 +398,20 @@ hook-before.jsonl
 """
 
 
+PIN_FILE = Path("tools") / "aec_upstream.json"   # the one pin source (AEC-D-pin-check-scope@1; pin.UPSTREAM_FILE)
+
+
+def pin_json(commit: str) -> str:
+    """The pin file `aec init --hook-style line` writes: MtG's format, reduced to what the hook and pin-check read."""
+    return json.dumps({
+        "_doc": "The Telosmith commit this repository follows. The one-line Claude Code hook runs only an aec "
+                "pip-installed from git at exactly this commit, and `aec pin-check` compares against it. Keep "
+                "the CI job's install line on the same commit. Written by aec init; edit it to move the pin.",
+        "repo": "https://github.com/eraevous/Telosmith",
+        "commit": commit,
+    }, indent=2) + "\n"
+
+
 STUB_PURPOSE = "TODO: the owner states what this project is for (stub from aec init)"
 
 
@@ -476,6 +490,22 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     if hooks:
         put("snippets/claude-settings.json", lambda: json.dumps(HOOK_STYLES[hook_style], indent=2) + "\n")
         put(f"snippets/{ci_name}-ci.yml", lambda: ci_snippet(ref, ci_name))
+    pin_state = None
+    if hooks and hook_style == "line":
+        # The line hook runs only the aec that tools/aec_upstream.json pins (AEC-R-hook-line-pin-gate@1), so the
+        # repository needs that file: write it with the commit the CI snippet pins, never over an existing one,
+        # and never through a symlinked tools/ directory (AEC-R-init-writes-pin-file-impl@1).
+        pin_key = PIN_FILE.as_posix()
+        tools = root / PIN_FILE.parent
+        if os.path.islink(tools) or (os.path.lexists(tools) and not tools.is_dir()):
+            pin_state = "blocked"
+        elif os.path.lexists(root / PIN_FILE):  # a dangling symlink counts as present
+            pin_state = "kept"
+            kept.append(pin_key)
+        else:
+            E.write_replacing(root / PIN_FILE, pin_json(ref))
+            pin_state = "created"
+            created.append(pin_key)
 
     spec_kit = (root / ".specify").is_dir()
     steps = []
@@ -497,6 +527,15 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
                    f"(pip install \"{AEC_SOURCE}@{ref}\"); a newer Telosmith updates the hook body without "
                    "editing .claude/settings.json. To go back, run `aec init --hooks --hook-style inline` in an empty "
                    "directory and copy its .aec/snippets/claude-settings.json over.")]
+        if pin_state == "created":
+            steps.append(f"Commit {PIN_FILE.as_posix()}: it pins Telosmith commit {ref}, the one the line hook "
+                         "will run (aec pin-check reads it too). Move it and the CI job's commit together.")
+        elif pin_state == "kept":
+            steps.append(f"{PIN_FILE.as_posix()} already existed and was kept, not rewritten: the line hook runs "
+                         f"only the aec it pins, so check that it names {ref} or install the commit it names.")
+        elif pin_state == "blocked":
+            steps.append(f"{PIN_FILE.as_posix()} was not written: {PIN_FILE.parent.as_posix()} is a symlink or not "
+                         "a directory. Until a regular file there names a full commit, the line hook refuses to run.")
     else:
         steps.append("No hook or CI snippet written: " + ("this repository has no Python code, so code-impact has "
                      "nothing to report. Re-run `aec init --hooks` after adding code." if snapshot["header"]["files"] == 0
