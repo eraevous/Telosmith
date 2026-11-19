@@ -157,14 +157,21 @@ def _release(version: str) -> tuple[int, ...] | None:
 
 def _installed_commit() -> str | None:
     """The commit this package was pip-installed from (PEP 610 `direct_url.json`), when that install is the
-    code running now; None for a source checkout, an editable install or a wheel from an index."""
+    code running now; None for a source checkout, an editable install, a wheel from an index, or an install from
+    another version-control system (only `vcs_info.vcs == "git"` counts: Copilot on #90, 14c200f)."""
     try:
         from importlib import metadata
         dist = metadata.distribution("telosmith")
         if Path(str(dist.locate_file("aec"))).resolve() != Path(__file__).resolve().parent:
             return None
-        sha = json.loads(dist.read_text("direct_url.json") or "{}").get("vcs_info", {}).get("commit_id", "")
-        return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+        data = json.loads(dist.read_text("direct_url.json") or "{}")
+        if (data.get("dir_info") or {}).get("editable"):
+            return None
+        vcs = data.get("vcs_info") or {}
+        if vcs.get("vcs") != "git":
+            return None
+        sha = vcs.get("commit_id", "")
+        return sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else None
     except Exception:  # noqa: BLE001 - any metadata problem means "unknown"
         return None
 

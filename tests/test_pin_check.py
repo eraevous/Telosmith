@@ -119,5 +119,66 @@ class PinCheck(unittest.TestCase):
         self.assertIn("Telosmith pin check: no Telosmith pin", err.getvalue())
 
 
+class _FakeDist:
+    """A PEP 610 distribution for `telosmith`: direct_url.json text and where its `aec` package sits."""
+
+    def __init__(self, direct_url, where=None):
+        self.direct_url = direct_url
+        self.where = where if where is not None else Path(pin.__file__).resolve().parent
+
+    def locate_file(self, name):
+        return self.where
+
+    def read_text(self, name):
+        return self.direct_url if name == "direct_url.json" else None
+
+
+def git_install(commit=SHA, **extra):
+    data = {"url": "https://github.com/eraevous/Telosmith.git",
+            "vcs_info": {"vcs": "git", "commit_id": commit, "requested_revision": commit}}
+    data.update(extra)
+    return json.dumps(data)
+
+
+class InstalledIdentity(unittest.TestCase):
+    """check() without the `local` override, over deterministic PEP 610 fixtures (Copilot on #90, 14c200f;
+    Kate's AEC-R-pin-check-local-identity@2)."""
+
+    def run_check(self, direct_url, where=None, pinned=SHA):
+        from unittest import mock
+        with mock.patch("importlib.metadata.distribution", return_value=_FakeDist(direct_url, where)):
+            return pin.check(repo(pinned))
+
+    def test_installed_git_commit_matching_the_pin_passes(self):
+        self.assertIn("pip install from git", self.run_check(git_install()))
+
+    def test_installed_git_commit_differing_from_the_pin_fails(self):
+        with self.assertRaisesRegex(pin.PinError, "but tools/aec_upstream.json pins"):
+            self.run_check(git_install(OTHER))
+
+    def test_non_git_vcs_does_not_qualify(self):
+        hg = json.dumps({"url": "https://hg.example/telosmith", "vcs_info": {"vcs": "hg", "commit_id": SHA}})
+        for text in (hg, json.dumps({"url": "x", "vcs_info": {"commit_id": SHA}})):
+            with self.subTest(text=text), self.assertRaisesRegex(pin.PinError, "indeterminate"):
+                self.run_check(text)
+
+    def test_editable_install_does_not_qualify_even_with_matching_git_metadata(self):
+        with self.assertRaisesRegex(pin.PinError, "indeterminate"):
+            self.run_check(git_install(dir_info={"editable": True}))
+
+    def test_unrelated_install_location_does_not_qualify(self):
+        with self.assertRaisesRegex(pin.PinError, "indeterminate"):
+            self.run_check(git_install(), where=Path(tempfile.mkdtemp()) / "aec")
+
+    def test_missing_malformed_or_commitless_metadata_does_not_qualify(self):
+        cases = [None, "", "{not json", "[]", json.dumps({"url": "x"}),
+                 json.dumps({"url": "x", "vcs_info": {"vcs": "git"}}),
+                 json.dumps({"url": "x", "vcs_info": {"vcs": "git", "commit_id": SHA[:12]}}),
+                 json.dumps({"url": "x", "vcs_info": {"vcs": "git", "commit_id": 7}})]
+        for text in cases:
+            with self.subTest(text=text), self.assertRaisesRegex(pin.PinError, "indeterminate"):
+                self.run_check(text)
+
+
 if __name__ == "__main__":
     unittest.main()
