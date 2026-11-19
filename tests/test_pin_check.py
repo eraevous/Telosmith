@@ -179,6 +179,40 @@ class InstalledIdentity(unittest.TestCase):
             with self.subTest(text=text), self.assertRaisesRegex(pin.PinError, "indeterminate"):
                 self.run_check(text)
 
+    def test_wrongly_typed_metadata_does_not_qualify(self):
+        # Kate, round 8 (kate-replies HO-AEC-20261117-DBN5--1c9f4393020d): non-object direct_url.json and
+        # wrongly typed vcs_info / dir_info must not establish a match, and must not crash.
+        commit = {"vcs": "git", "commit_id": SHA}
+        cases = ['"x"', "7", "null",
+                 json.dumps({"url": "x", "vcs_info": "git"}),
+                 json.dumps({"url": "x", "vcs_info": [commit]}),
+                 json.dumps({"url": "x", "vcs_info": commit, "dir_info": ["editable"]}),
+                 json.dumps({"url": "x", "vcs_info": commit, "dir_info": {"editable": "false"}})]
+        for text in cases:
+            with self.subTest(text=text), self.assertRaisesRegex(pin.PinError, "indeterminate"):
+                self.run_check(text)
+
+    def test_nonexistent_claimed_install_location_does_not_qualify(self):
+        missing = Path(tempfile.mkdtemp()) / "gone" / "aec"
+        self.assertFalse(missing.exists())
+        with self.assertRaisesRegex(pin.PinError, "indeterminate"):
+            self.run_check(git_install(), where=missing)
+
+    def test_cli_exit_status_and_classification(self):
+        # Kate, round 8: assert the exit status and the diagnostic's class, not only failure.
+        from unittest import mock
+        cases = [(git_install(), SHA, 0, "matches"),
+                 (git_install(OTHER), SHA, 1, "but tools/aec_upstream.json pins"),
+                 (git_install(dir_info={"editable": True}), SHA, 1, "indeterminate"),
+                 ("{not json", SHA, 1, "indeterminate")]
+        for direct_url, pinned, code, says in cases:
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(direct_url=direct_url), \
+                    mock.patch("importlib.metadata.distribution", return_value=_FakeDist(direct_url)), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(main(["pin-check", str(repo(pinned))]), code)
+            self.assertIn(says, (out if code == 0 else err).getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
