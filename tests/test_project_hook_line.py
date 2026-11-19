@@ -3,7 +3,10 @@
 AEC-D-braided-dcc@1, propagation D: the hook body moves into the package (`aec hook project`), so a body fix
 ships with a Telosmith release instead of a settings edit in every repository. Kate's gate for replacing any
 repository's hook includes "compatibility tests show the same exit behaviour as today's hook"; these run both
-hooks on the same checkouts and compare. They also cover the two diagnostics the line adds.
+hooks on the same checkouts and compare. They also cover the line's pre-import gate (Kate's
+AEC-R-hook-launcher-preimport@1 and AEC-R-hook-line-pin-gate@1, under AEC-D-pin-check-scope@1): the line runs only
+an aec pip-installed from git at the commit in tools/aec_upstream.json, and checks that before any aec code runs.
+Each test builds such an install from this checkout's src/aec plus PEP 610 metadata.
 """
 import json
 import os
@@ -18,19 +21,48 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = str(ROOT / "src")
 sys.path.insert(0, SRC)
 
-from aec.init import HOOK, HOOK_COMMAND, HOOK_LINE, HOOK_LINE_COMMAND, init  # noqa: E402
+from aec.init import HOOK, HOOK_COMMAND, HOOK_LINE, HOOK_LINE_COMMAND, HOOK_LINE_GATE, init  # noqa: E402
+
+PIN = "0123456789abcdef0123456789abcdef01234567"
+OTHER = "fedcba9876543210fedcba9876543210fedcba98"
+
+
+def install(site, commit=PIN, *, vcs="git", editable=False, direct_url=True, package=None):
+    """A pip-installed telosmith in `site`: the aec package (this checkout's, or `package`) and a dist-info with
+    PEP 610 direct_url.json naming `commit`."""
+    site.mkdir(parents=True, exist_ok=True)
+    if package is None:
+        shutil.copytree(pathlib.Path(SRC) / "aec", site / "aec", ignore=shutil.ignore_patterns("__pycache__"))
+    else:
+        shutil.copytree(package, site / "aec")
+    info = site / "telosmith-0.5.0.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text("Metadata-Version: 2.1\nName: telosmith\nVersion: 0.5.0\n")
+    if direct_url:
+        data = {"url": "https://github.com/eraevous/Telosmith.git"}
+        if editable:
+            data["dir_info"] = {"editable": True}
+        else:
+            data["vcs_info"] = {"vcs": vcs, "commit_id": commit}
+        (info / "direct_url.json").write_text(json.dumps(data))
+    return site
+
 
 FORMS = {"inline": HOOK_COMMAND, "line": HOOK_LINE_COMMAND}
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")
-class SideBySide(unittest.TestCase):
+class Checkout(unittest.TestCase):
+    """A git checkout with Telosmith set up, its pin file, and a pinned install of this checkout's aec."""
+
     def setUp(self):
         self._dirs = [tempfile.TemporaryDirectory() for _ in range(2)]
         self.project = pathlib.Path(self._dirs[0].name).resolve()
         self.outside = pathlib.Path(self._dirs[1].name).resolve()
         (self.project / "pkg").mkdir()
         (self.project / "pkg" / "__init__.py").write_text("def f():\n    return 1\n")
+        (self.project / "tools").mkdir()
+        (self.project / "tools" / "aec_upstream.json").write_text(json.dumps({"commit": PIN}))
+        self.site = install(self.outside / "site")
         init(self.project, owner="tester", hooks=True)
         self._git("init", "-q")
         self._commit("init")
@@ -46,7 +78,8 @@ class SideBySide(unittest.TestCase):
         self._git("add", "-A")
         self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg)
 
-    def _run(self, command, pythonpath=SRC, project=None):
+    def _run(self, command, pythonpath="", project=None):
+        pythonpath = str(self.site) if pythonpath == "" else pythonpath
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project or self.project))
         env.pop("PYTHONPATH", None)
         if pythonpath is not None:
@@ -72,6 +105,9 @@ class SideBySide(unittest.TestCase):
             self.assertEqual(d.returncode, expected, f"{name}: {d.stderr}")
         return done
 
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")
+class SideBySide(Checkout):
     def test_clean_checkout_is_quiet(self):
         self.assertSameExit(0)
 
@@ -173,19 +209,118 @@ class SideBySide(unittest.TestCase):
         fake = self.outside / "old"
         (fake / "aec").mkdir(parents=True)
         (fake / "aec" / "__init__.py").write_text("")
-        (fake / "aec" / "__main__.py").write_text(
-            "import sys\n"
-            "if '--version' in sys.argv: print('aec 0.5.0'); sys.exit(0)\n"
-            "sys.exit(2)\n")
-        done = self._run(HOOK_LINE_COMMAND, pythonpath=str(fake))
+        (fake / "aec" / "__main__.py").write_text("import sys\nsys.exit(2)\n")
+        site = install(self.outside / "oldsite", package=fake / "aec")
+        done = self._run(HOOK_LINE_COMMAND, pythonpath=str(site))
         self.assertEqual(done.returncode, 1, done.stderr)
-        self.assertIn("aec 0.5.0 has no 'hook project'", done.stderr)
+        self.assertIn("the pinned aec has no hook project", done.stderr)
 
     def test_line_is_short_and_carries_no_body(self):
-        self.assertLess(len(HOOK_LINE_COMMAND), len(HOOK_COMMAND))
+        # The pre-import gate has to be settings text (nothing it checks may run first); the rest of the line
+        # stays shorter than the inline hook.
+        self.assertLess(len(HOOK_LINE_COMMAND) - len(HOOK_LINE_GATE), len(HOOK_COMMAND))
         for step in ("aec edges", "aec check", "aec snapshot", "code-impact"):
             self.assertNotIn(step, HOOK_LINE_COMMAND)
-        self.assertIn('aec hook project "$P"', HOOK_LINE_COMMAND)
+        self.assertIn("sys.argv=['aec','hook','project',P]", HOOK_LINE_GATE)
+
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")
+class PreImportGate(Checkout):
+    """The line runs `aec hook project` only for an aec pip-installed from git at the pinned commit, and decides
+    that before any aec code, or any code on an environment import path, runs."""
+
+    def line(self, pythonpath=""):
+        return self._run(HOOK_LINE_COMMAND, pythonpath=pythonpath)
+
+    def refused(self, done, text):
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn(text, done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+
+    def planted(self, directory, name):
+        """A module in `directory` that drops a marker file when it is imported."""
+        marker = self.outside / f"ran-{name.replace('/', '-')}"
+        path = directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"open({str(marker)!r}, 'w').close()\n")
+        return marker
+
+    def test_pinned_install_runs(self):
+        done = self.line()
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_pin_file_missing_symlinked_or_not_a_full_commit_is_refused(self):
+        pin = self.project / "tools" / "aec_upstream.json"
+        real = self.outside / "pin.json"
+        real.write_text(json.dumps({"commit": PIN}))
+        cases = {
+            "missing": None, "abbreviated": {"commit": PIN[:12]}, "tag": {"commit": "v0.5.0"},
+            "uppercase": {"commit": PIN.upper()}, "no commit": {"other": PIN}, "list": [PIN], "symlink": "link",
+        }
+        for name, content in cases.items():
+            with self.subTest(name):
+                pin.unlink(missing_ok=True)
+                if content == "link":
+                    pin.symlink_to(real)
+                elif content is not None:
+                    pin.write_text(json.dumps(content))
+                self.refused(self.line(), "names no full commit")
+        pin.unlink()
+        pin.write_text("{not json")
+        self.refused(self.line(), "names no full commit")
+
+    def test_install_that_is_not_the_pinned_git_commit_is_refused(self):
+        variants = {
+            "other commit": dict(commit=OTHER), "abbreviated commit": dict(commit=PIN[:12]),
+            "hg": dict(vcs="hg"), "editable": dict(editable=True), "no direct_url": dict(direct_url=False),
+        }
+        for name, kwargs in variants.items():
+            with self.subTest(name):
+                site = install(self.outside / f"site-{name.replace(' ', '-')}", **kwargs)
+                self.refused(self.line(str(site)), "is not a non-editable pip install from git of the pinned commit")
+
+    def test_source_checkout_is_refused_before_its_code_runs(self):
+        # Kate's case: an ignored shadow package in a writable checkout (src/aec/records/__init__.py) must not run.
+        checkout = self.outside / "checkout" / "src"
+        shutil.copytree(pathlib.Path(SRC) / "aec", checkout / "aec", ignore=shutil.ignore_patterns("__pycache__"))
+        shadow = self.planted(checkout, "aec/records/__init__.py")
+        top = self.planted(checkout, "aec/__init__.py")
+        done = self.line(str(checkout))
+        self.refused(done, "is not a non-editable pip install from git of the pinned commit")
+        self.assertFalse(shadow.exists() or top.exists(), "checkout code ran before the gate decided")
+
+    def test_shadow_aec_earlier_on_the_path_is_refused_without_running(self):
+        shadow_dir = self.outside / "shadow"
+        marker = self.planted(shadow_dir, "aec/__init__.py")
+        done = self.line(os.pathsep.join([str(shadow_dir), str(self.site)]))
+        self.refused(done, "is not a non-editable pip install")
+        self.assertFalse(marker.exists())
+
+    def test_startup_hooks_on_environment_paths_do_not_run(self):
+        # PYTHONPATH entries are appended after the gate's isolated start, so sitecustomize, usercustomize and .pth
+        # files there never run, and they can't shadow the standard library the gate or aec imports.
+        extra = self.outside / "extra"
+        markers = [self.planted(extra, n) for n in ("sitecustomize.py", "usercustomize.py", "json.py", "re.py")]
+        (extra / "evil.pth").write_text(f"import os; open({str(self.outside / 'ran-pth')!r}, 'w').close()\n")
+        done = self.line(os.pathsep.join([str(extra), str(self.site)]))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual([m.name for m in markers if m.exists()], [])
+        self.assertFalse((self.outside / "ran-pth").exists())
+
+    def test_working_directory_and_project_cannot_supply_the_gate_or_aec(self):
+        # The project is filtered from PYTHONPATH and the gate starts from / in isolated mode: a pinned-looking
+        # install inside the project is never found.
+        inside = install(self.project / "vendor")
+        marker = self.planted(self.project, "json.py")
+        done = self.line(str(inside))
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_missing_python_capability_fails_closed(self):
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(self.project), PATH="/nonexistent")
+        done = subprocess.run(["/bin/bash", "-c", HOOK_LINE_COMMAND], env=env, capture_output=True, text=True)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertNotEqual(done.returncode, 2)
 
 
 class InitStyles(unittest.TestCase):
