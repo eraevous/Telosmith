@@ -81,14 +81,41 @@ class Remote(unittest.TestCase):
     def test_full_id_of_a_non_commit_or_missing_object_fails(self):  # Kate, round 10
         tree = git(self.repo, "rev-parse", "HEAD^{tree}")
         blob = git(self.repo, "rev-parse", "HEAD:a")
-        for sha, why in ((tree, "a tree"), (blob, "a blob"), ("0" * 40, "no such object")):
+        # (sha, message in the checkout, message at the remote): git's own reason is kept (Copilot on #91)
+        for sha, local_why, remote_why in ((tree, "a tree", "a tree in"),
+                                           (blob, "a blob", "a blob in"),
+                                           ("0" * 40, "could not read that object", "git fetch failed")):
             with self.subTest(sha=sha):
                 with self.assertRaises(PinResolutionError) as cm:
                     resolve_commit(sha, local=self.repo)
-                self.assertIn(why, str(cm.exception))
+                self.assertIn(local_why, str(cm.exception))
                 with self.assertRaises(PinResolutionError) as cm:
                     self.resolve(sha)
-                self.assertIn("not a commit" if why != "no such object" else "no such object", str(cm.exception))
+                self.assertIn(remote_why, str(cm.exception))
+
+    def test_failure_reasons_name_the_cause(self):  # Copilot on #91: not "no such object" for every failure
+        with mock.patch.object(I.subprocess, "run", side_effect=I.subprocess.TimeoutExpired("git", 20)):
+            with self.assertRaises(PinResolutionError) as cm:
+                resolve_commit(self.c1)
+        self.assertIn("timed out", str(cm.exception))
+        with mock.patch.object(I.subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaises(PinResolutionError) as cm:
+                resolve_commit(self.c1)
+        self.assertIn("git failed", str(cm.exception))
+        with self.assertRaises(PinResolutionError) as cm:
+            resolve_commit(self.c1, source=str(Path(self.tmp.name) / "missing"))
+        self.assertIn("git fetch failed", str(cm.exception))
+
+    def test_a_kept_ci_snippet_is_not_said_to_pin_the_new_commit(self):  # Copilot on #91
+        d, _ = self._init("v9.9.9")                       # snippet pins c1
+        with mock.patch.object(I, "resolve_install_ref", return_value=("main", None)), \
+                mock.patch.object(I, "resolve_commit", self.resolve):
+            rep = init(d, owner="t", hooks=True)            # now resolves to c2; the snippet is kept
+        self.assertIn(".aec/snippets/aec-ci.yml", rep["kept"])
+        self.assertIn(self.c1, (d / ".aec/snippets/aec-ci.yml").read_text())
+        steps = rep["next_steps"]
+        self.assertNotIn(f"it pins Telosmith commit {self.c2}", steps)
+        self.assertIn("already existed and was kept", steps)
 
     def test_same_commit_tag_and_branch_is_not_ambiguous(self):
         self.assertEqual(self.resolve("same"), self.c2)

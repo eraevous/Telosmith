@@ -252,11 +252,13 @@ def resolve_commit(rev: str, source: str = AEC_SOURCE, local: Path | None = None
     if _FULL_SHA.fullmatch(rev):
         # Full length is syntax, not identity (Kate, round 10): ask git that the id names a commit, in the
         # Telosmith checkout it came from when there is one, else at the source.
-        kind = _local_object_type(local, rev, timeout) if local is not None else _remote_object_type(url, rev, timeout)
+        kind, why = (_local_object_type(local, rev, timeout) if local is not None
+                     else _remote_object_type(url, rev, timeout))
         if kind != "commit":
             where = str(local) if local is not None else url
             raise PinResolutionError(f"cannot pin Telosmith revision {rev[:12]}: " + (
-                f"it is a {kind} in {where}, not a commit" if kind else f"no such object could be read from {where}"))
+                f"it is a {kind} in {where}, not a commit" if kind
+                else f"could not read that object from {where} ({why})"))
         return rev
     if re.fullmatch(r"[0-9a-f]{4,39}", rev):
         if local is None:
@@ -296,38 +298,52 @@ def resolve_commit(rev: str, source: str = AEC_SOURCE, local: Path | None = None
     sha = tag or head
     # ls-remote gives ids, not object types: a tag can name a tree or a blob (Codex on #91). Fetch that one
     # object, shallow, into a throwaway repository and ask git what it is.
-    kind = _remote_object_type(url, sha, timeout)
+    kind, why = _remote_object_type(url, sha, timeout)
     if kind != "commit":
-        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: it names {sha[:12]}, which is "
-                                 + (f"a {kind}, not a commit" if kind else "not a commit git could fetch"))
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: it names {sha[:12]}, " + (
+            f"which is a {kind}, not a commit" if kind else f"which could not be fetched ({why})"))
     return sha
 
 
-def _local_object_type(local: Path, sha: str, timeout: float) -> str | None:
-    """The type of object `sha` in the git checkout at `local`, or None if git can't read it."""
+def _git_reason(out) -> str:
+    """The last line git wrote to stderr, or the exit status."""
+    lines = (out.stderr or "").strip().splitlines()
+    return lines[-1] if lines else f"git exited {out.returncode}"
+
+
+def _local_object_type(local: Path, sha: str, timeout: float) -> tuple[str | None, str]:
+    """(type of object `sha` in the git checkout at `local`, or None; git's reason when None)."""
     try:
         out = subprocess.run(["git", "-C", str(local), "cat-file", "-t", sha], capture_output=True, text=True,
                              timeout=timeout)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return (out.stdout.strip() or None) if out.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f"git failed: {error}"
+    kind = out.stdout.strip() if out.returncode == 0 else ""
+    return (kind, "") if kind else (None, _git_reason(out))
 
 
-def _remote_object_type(url: str, sha: str, timeout: float) -> str | None:
-    """The type of object `sha` at `url` ("commit", "tree", ...), or None if it can't be fetched."""
+def _remote_object_type(url: str, sha: str, timeout: float) -> tuple[str | None, str]:
+    """(type of object `sha` at `url` ("commit", "tree", ...), or None; why it couldn't be fetched when None).
+    Git's own message is kept, so a network failure or timeout isn't reported as a missing object (Copilot
+    on #91)."""
     import tempfile
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
         with tempfile.TemporaryDirectory(prefix="aec-pin-") as tmp:
             run = functools.partial(subprocess.run, capture_output=True, text=True, timeout=timeout, env=env)
-            if run(["git", "init", "-q", "--bare", tmp]).returncode:
-                return None
-            if run(["git", "-C", tmp, "fetch", "-q", "--depth=1", "--no-tags", "--", url, sha]).returncode:
-                return None
+            out = run(["git", "init", "-q", "--bare", tmp])
+            if out.returncode:
+                return None, f"git init failed: {_git_reason(out)}"
+            out = run(["git", "-C", tmp, "fetch", "-q", "--depth=1", "--no-tags", "--", url, sha])
+            if out.returncode:
+                return None, f"git fetch failed: {_git_reason(out)}"
             out = run(["git", "-C", tmp, "cat-file", "-t", sha])
-            return (out.stdout.strip() or None) if out.returncode == 0 else None
-    except (OSError, subprocess.SubprocessError):
-        return None
+            kind = out.stdout.strip() if out.returncode == 0 else ""
+            return (kind, "") if kind else (None, _git_reason(out))
+    except subprocess.TimeoutExpired:
+        return None, f"git timed out after {timeout:g}s"
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f"git failed: {error}"
 
 
 def __getattr__(name):  # CI is resolved on first use, not at import (resolving it may run git)
@@ -470,8 +486,10 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
         steps.append("Replace the purpose stub P0 in .aec/records.jsonl with your own statement (append version 2).")
     if hooks:
         steps += ["Copy .aec/snippets/claude-settings.json into .claude/settings.json (merge if one exists).",
-                  f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml (it pins Telosmith "
-                  f"commit {ref}).",
+                  (f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml (it pins Telosmith "
+                   f"commit {ref})." if f".aec/snippets/{ci_name}-ci.yml" in created else
+                   f".aec/snippets/{ci_name}-ci.yml already existed and was kept, not regenerated, so its pin may "
+                   f"not be {ref}: check that it pins the same commit as your local install below."),
                   ("The hook runs the aec installed in your environment: it needs `code-impact --exit-code` "
                    f"(Telosmith 0.5.0 or later: pip install \"{AEC_SOURCE}@{ref}\")."
                    if hook_style == "inline" else
