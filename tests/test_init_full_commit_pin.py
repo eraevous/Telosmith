@@ -46,6 +46,7 @@ class Remote(unittest.TestCase):
         git(r, "branch", "both", cls.c2)
         git(r, "tag", "same", cls.c2)        # alike, on the same commit: not ambiguous
         git(r, "tag", "treetag", git(r, "rev-parse", "HEAD^{tree}"))     # a tag naming a tree (Codex on #91)
+        git(r, "tag", "blobtag", git(r, "rev-parse", "HEAD:a"))
         git(r, "tag", "-a", "-m", "x", "annotree", git(r, "rev-parse", "HEAD^{tree}"))
         git(r, "branch", "same", cls.c2)
         cls.resolve = staticmethod(functools.partial(resolve_commit, source=str(r)))
@@ -73,9 +74,21 @@ class Remote(unittest.TestCase):
         self.assertEqual(resolve_commit("light", source="git+" + str(self.repo)), self.c1)
 
     # test_must_show 3: a full commit is kept
-    def test_full_commit_is_preserved_without_running_git(self):
-        with mock.patch.object(I.subprocess, "run", side_effect=AssertionError("git ran")):
-            self.assertEqual(resolve_commit(self.c2), self.c2)
+    def test_full_commit_is_preserved(self):
+        self.assertEqual(self.resolve(self.c2), self.c2)
+        self.assertEqual(resolve_commit(self.c1, local=self.repo), self.c1)
+
+    def test_full_id_of_a_non_commit_or_missing_object_fails(self):  # Kate, round 10
+        tree = git(self.repo, "rev-parse", "HEAD^{tree}")
+        blob = git(self.repo, "rev-parse", "HEAD:a")
+        for sha, why in ((tree, "a tree"), (blob, "a blob"), ("0" * 40, "no such object")):
+            with self.subTest(sha=sha):
+                with self.assertRaises(PinResolutionError) as cm:
+                    resolve_commit(sha, local=self.repo)
+                self.assertIn(why, str(cm.exception))
+                with self.assertRaises(PinResolutionError) as cm:
+                    self.resolve(sha)
+                self.assertIn("not a commit" if why != "no such object" else "no such object", str(cm.exception))
 
     def test_same_commit_tag_and_branch_is_not_ambiguous(self):
         self.assertEqual(self.resolve("same"), self.c2)
@@ -86,6 +99,7 @@ class Remote(unittest.TestCase):
             "nope": "no tag or branch",
             "both": "both a tag",
             "treetag": "a tree, not a commit",
+            "blobtag": "a blob, not a commit",
             "annotree": "a tree, not a commit",
             self.c1[:10]: "abbreviated",            # no checkout given
             "": "not a commit",

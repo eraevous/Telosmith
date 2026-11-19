@@ -240,14 +240,23 @@ def resolve_commit(rev: str, source: str = AEC_SOURCE, local: Path | None = None
                    timeout: float = 20) -> str:
     """The full commit object ID for `rev`, or PinResolutionError (AEC-R-init-full-commit-pin@1).
 
-    A full 40-character commit is kept as given. An abbreviated commit is resolved only in `local`, a git
+    A full 40-character id is kept as given once git confirms it names a commit (in `local` when given, else
+    at `source`). An abbreviated commit is resolved only in `local`, a git
     checkout of Telosmith, where `git rev-parse` refuses an ambiguous prefix and a non-commit object. A
     branch or tag name is resolved with `git ls-remote` against `source`: an annotated tag gives its peeled
     commit, never the tag object; a name that is both a tag and a branch on different commits is ambiguous.
     Nothing is guessed: any other outcome (offline, no git, unknown name) raises with the reason."""
     if not isinstance(rev, str) or not rev or rev.startswith("-") or any(c.isspace() for c in rev):
         raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: not a commit, branch or tag name")
+    url = source[4:] if source.startswith("git+") else source
     if _FULL_SHA.fullmatch(rev):
+        # Full length is syntax, not identity (Kate, round 10): ask git that the id names a commit, in the
+        # Telosmith checkout it came from when there is one, else at the source.
+        kind = _local_object_type(local, rev, timeout) if local is not None else _remote_object_type(url, rev, timeout)
+        if kind != "commit":
+            where = str(local) if local is not None else url
+            raise PinResolutionError(f"cannot pin Telosmith revision {rev[:12]}: " + (
+                f"it is a {kind} in {where}, not a commit" if kind else f"no such object could be read from {where}"))
         return rev
     if re.fullmatch(r"[0-9a-f]{4,39}", rev):
         if local is None:
@@ -263,7 +272,6 @@ def resolve_commit(rev: str, source: str = AEC_SOURCE, local: Path | None = None
             raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: no single commit with that prefix "
                                      f"in {local} (unknown, ambiguous or not a commit)")
         return sha
-    url = source[4:] if source.startswith("git+") else source
     try:
         out = subprocess.run(["git", "ls-remote", "--", url, f"refs/tags/{rev}", f"refs/tags/{rev}^{{}}",
                               f"refs/heads/{rev}"], capture_output=True, text=True, timeout=timeout,
@@ -293,6 +301,16 @@ def resolve_commit(rev: str, source: str = AEC_SOURCE, local: Path | None = None
         raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: it names {sha[:12]}, which is "
                                  + (f"a {kind}, not a commit" if kind else "not a commit git could fetch"))
     return sha
+
+
+def _local_object_type(local: Path, sha: str, timeout: float) -> str | None:
+    """The type of object `sha` in the git checkout at `local`, or None if git can't read it."""
+    try:
+        out = subprocess.run(["git", "-C", str(local), "cat-file", "-t", sha], capture_output=True, text=True,
+                             timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (out.stdout.strip() or None) if out.returncode == 0 else None
 
 
 def _remote_object_type(url: str, sha: str, timeout: float) -> str | None:
@@ -413,9 +431,13 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     if hooks:
         # The snippet and the next steps name one full commit (AEC-R-init-full-commit-pin@1). A release tag or
         # `main` is resolved now; if that fails, init stops here, before anything is written.
-        ref, note = resolve_install_ref(__version__, _installed_commit())
+        installed = _installed_commit()
+        ref, note = resolve_install_ref(__version__, installed)
+        # A checkout's HEAD (the note says so) is checked in that checkout, so an unpushed HEAD still works;
+        # anything else is checked at the Telosmith source.
+        local = Path(__file__).resolve().parent if note and ref != installed else None
         try:
-            ref = resolve_commit(ref)
+            ref = resolve_commit(ref, local=local)
         except PinResolutionError as error:
             raise PinResolutionError(f"{error}. Install Telosmith from git at a commit "
                                      f"(pip install \"{AEC_SOURCE}@<commit>\") and run init again, or run it "
