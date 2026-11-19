@@ -12,6 +12,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   messages for "no aec importable" and "aec too old for the line". `inline` stays the default: the line does not
   yet check that the local aec is the version CI pins, one of the gates in `docs/integrations/braided-dcc.md`.
 
+### Added
+- `aec pin-check [ROOT]`: exits 0 only when the installed aec (a pip install from git, PEP 610) equals the
+  commit in `tools/aec_upstream.json`, and 1 with the reason otherwise: mismatch, a missing, symlinked or unreadable
+  pin file, a pin that is not a full 40-character SHA, or an indeterminate local version (a source checkout or
+  editable install never qualifies). Workflow files are not read (owner decision `AEC-D-pin-check-scope@1`). It is
+  the check `AEC-R-hook-line-pin-gate@1` asks the one-line hook to enforce; wiring it into the line is a later PR.
+
 ### Added (draft, DEC-223 proposed design)
 - `aec hook install|uninstall|print|verify` and `aec hook run`: a user-level Claude Code hook that runs the
   installed `aec` from its own environment (`-I`, from `/`, absolute interpreter), only in repos with
