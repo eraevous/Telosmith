@@ -45,6 +45,8 @@ class Remote(unittest.TestCase):
         git(r, "tag", "both", cls.c1)        # a tag and a branch named alike, on different commits
         git(r, "branch", "both", cls.c2)
         git(r, "tag", "same", cls.c2)        # alike, on the same commit: not ambiguous
+        git(r, "tag", "treetag", git(r, "rev-parse", "HEAD^{tree}"))     # a tag naming a tree (Codex on #91)
+        git(r, "tag", "-a", "-m", "x", "annotree", git(r, "rev-parse", "HEAD^{tree}"))
         git(r, "branch", "same", cls.c2)
         cls.resolve = staticmethod(functools.partial(resolve_commit, source=str(r)))
 
@@ -83,6 +85,8 @@ class Remote(unittest.TestCase):
         cases = {
             "nope": "no tag or branch",
             "both": "both a tag",
+            "treetag": "a tree, not a commit",
+            "annotree": "a tree, not a commit",
             self.c1[:10]: "abbreviated",            # no checkout given
             "": "not a commit",
             "-x": "not a commit",

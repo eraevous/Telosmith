@@ -6,6 +6,7 @@ it. Standard library only.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -284,7 +285,31 @@ def resolve_commit(rev: str, source: str = AEC_SOURCE, local: Path | None = None
                                  f"branch ({head[:12]}); give the full commit")
     if not (tag or head):
         raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: no tag or branch of that name at {url}")
-    return tag or head
+    sha = tag or head
+    # ls-remote gives ids, not object types: a tag can name a tree or a blob (Codex on #91). Fetch that one
+    # object, shallow, into a throwaway repository and ask git what it is.
+    kind = _remote_object_type(url, sha, timeout)
+    if kind != "commit":
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: it names {sha[:12]}, which is "
+                                 + (f"a {kind}, not a commit" if kind else "not a commit git could fetch"))
+    return sha
+
+
+def _remote_object_type(url: str, sha: str, timeout: float) -> str | None:
+    """The type of object `sha` at `url` ("commit", "tree", ...), or None if it can't be fetched."""
+    import tempfile
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        with tempfile.TemporaryDirectory(prefix="aec-pin-") as tmp:
+            run = functools.partial(subprocess.run, capture_output=True, text=True, timeout=timeout, env=env)
+            if run(["git", "init", "-q", "--bare", tmp]).returncode:
+                return None
+            if run(["git", "-C", tmp, "fetch", "-q", "--depth=1", "--no-tags", "--", url, sha]).returncode:
+                return None
+            out = run(["git", "-C", tmp, "cat-file", "-t", sha])
+            return (out.stdout.strip() or None) if out.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def __getattr__(name):  # CI is resolved on first use, not at import (resolving it may run git)

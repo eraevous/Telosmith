@@ -8,7 +8,7 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 ### Changed (AEC-R-init-full-commit-pin@1)
 - `aec init` with hooks pins the generated CI job (and the install lines in its next steps) to a full 40-character
   commit. A release tag or `main` is resolved with `git ls-remote`, an annotated tag to its commit; when no commit
-  can be established (offline, no git, an unknown or ambiguous name), init writes nothing and exits non-zero with
+  can be established (offline, no git, an unknown or ambiguous name, a tag naming a tree or blob), init writes nothing and exits non-zero with
   the reason. `--no-hooks` needs no network. Before, it could write `@v0.x.y` or `@main`.
 
 ### Added (opt-in, AEC-D-braided-dcc@1 propagation D)
