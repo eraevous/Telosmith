@@ -494,7 +494,7 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     if hooks and hook_style == "line":
         # The line hook runs only the aec that tools/aec_upstream.json pins (AEC-R-hook-line-pin-gate@1), so the
         # repository needs that file: write it with the commit the CI snippet pins, never over an existing one,
-        # and never through a symlinked tools/ directory (AEC-R-init-writes-pin-file-impl@1).
+        # and never through a symlinked tools/ directory (AEC-R-init-writes-pin-file-impl@2).
         pin_key = PIN_FILE.as_posix()
         tools = root / PIN_FILE.parent
         if os.path.islink(tools) or (os.path.lexists(tools) and not tools.is_dir()):

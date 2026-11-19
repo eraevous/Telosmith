@@ -1,4 +1,7 @@
-"""`aec init --hook-style line` writes the pin file the line hook needs (AEC-R-init-writes-pin-file-impl@1).
+"""`aec init --hook-style line` writes the pin file the line hook needs.
+
+Kate's AEC-R-init-line-pin-bootstrap@1, AEC-R-init-pin-preservation@1 and AEC-R-init-unresolved-pin-no-write@1
+(independent); AEC-R-init-writes-pin-file-impl@2 (implementer).
 
 The one-line hook runs only an aec pip-installed from git at the commit in tools/aec_upstream.json
 (AEC-R-hook-line-pin-gate@1, AEC-D-pin-check-scope@1). Without that file it refuses to run, so a repository
@@ -85,6 +88,18 @@ class InitPinFile(unittest.TestCase):
         with self.assertRaises(PinError):      # pin-check still refuses a symlinked pin
             read_pin(self.root)
 
+    def test_a_live_symlink_at_the_pin_path_is_kept_and_its_target_unchanged(self):  # Kate, round 13
+        (self.root / "tools").mkdir()
+        target = self.outside / "theirs.json"
+        theirs = json.dumps({"commit": OTHER})
+        target.write_text(theirs)
+        os.symlink(target, self.root / PIN)
+        rep = self._init(hook_style="line")
+        self.assertEqual(target.read_text(), theirs)
+        self.assertEqual(os.readlink(self.root / PIN), str(target))
+        self.assertIn("tools/aec_upstream.json", rep["kept"])
+        self.assertIn("already existed and was kept", rep["next_steps"])
+
     def test_a_symlinked_tools_directory_is_not_written_through(self):
         os.symlink(self.outside, self.root / "tools")
         rep = self._init(hook_style="line")
@@ -112,8 +127,8 @@ class InitPinFile(unittest.TestCase):
                 mock.patch.object(I, "resolve_commit", side_effect=I.PinResolutionError("cannot pin")), \
                 self.assertRaises(I.PinResolutionError):
             init(self.root, owner="t", hooks=True, hook_style="line")
-        self.assertFalse(os.path.lexists(self.root / "tools"))
-        self.assertFalse(os.path.lexists(self.root / ".aec"))
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["m.py"])   # Kate, round 13: no write at all
+        self.assertEqual((self.root / "m.py").read_text(), "x = 1\n")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   messages for "no aec importable" and "aec too old for the line". `inline` stays the default: the line does not
   yet check that the local aec is the version CI pins, one of the gates in `docs/integrations/braided-dcc.md`.
 
-### Added (AEC-R-init-writes-pin-file-impl@1)
+### Added (AEC-R-init-line-pin-bootstrap@1, AEC-R-init-pin-preservation@1)
 - `aec init --hook-style line` also writes `tools/aec_upstream.json` with the commit the CI snippet pins, so the
   line hook and `aec pin-check` find the pin they require. An existing file (or a symlink) there is kept, never
   overwritten; a symlinked `tools/` is never written through. The inline default and `--no-hooks` write no pin file.
