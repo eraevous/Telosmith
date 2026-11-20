@@ -51,6 +51,12 @@ Or start from `McpServer(name, version)` for a server without the record tools.
 
 - Protocol revisions 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25. A client asking for another revision is
   answered with the newest of these, and the client decides whether to go on (the MCP negotiation rule).
+- Arguments are checked against the tool's `inputSchema` before the handler runs: top-level `required`, and per
+  property `type`, `enum` and `minimum` (plus `additionalProperties: false` when declared). A bad call comes back as
+  a result with `isError`, as MCP 2025-11-25 asks, so the caller can correct it; the handler never sees it. Richer
+  schema rules (nested objects, patterns) stay the handler's job.
+- A tool's unexpected exception comes back as `<tool> failed: internal error (<ExceptionType>)`. Its message can
+  carry paths, so it goes to the server's stderr, not to the client.
 - Methods: `initialize`, `ping`, `tools/list`, `tools/call`; notifications are never answered. No resources, prompts,
   batches or HTTP transport: relay-kit's `tools/mcp_server.py` (relay-kit/mcp@2) has those for its records store.
 - Record text is data, not instructions; every record result carries a notice saying so. A recorded `authored_by` or

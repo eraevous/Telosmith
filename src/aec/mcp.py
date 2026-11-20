@@ -112,12 +112,20 @@ class McpServer:
             raise RpcError(INVALID_PARAMS, f"unknown tool: {name!r}")
         if not isinstance(args, dict):
             raise RpcError(INVALID_PARAMS, "arguments must be an object")
+        problems = validate_args(self.tools[name].input_schema, args)
+        if problems:  # MCP 2025-11-25: input validation errors are tool execution errors, so the caller can correct
+            return {"content": [{"type": "text", "text": f"{name}: invalid arguments: " + "; ".join(problems)}],
+                    "isError": True}
         try:
             value = self.tools[name].handler(args)
         except ToolError as e:
             return {"content": [{"type": "text", "text": str(e)}], "isError": True}
         except Exception as e:  # a tool's own bug is the tool's failure, not the session's
-            return {"content": [{"type": "text", "text": f"{name} failed: {type(e).__name__}: {e}"}], "isError": True}
+            # Only the exception's type: its message can carry paths or other environment details (Kate's
+            # AEC-R-mcp-tool-contract@1). The server's own stderr is the place to debug it.
+            print(f"aec mcp: tool {name} raised {type(e).__name__}: {e}", file=sys.stderr)
+            return {"content": [{"type": "text", "text": f"{name} failed: internal error ({type(e).__name__})"}],
+                    "isError": True}
         out = {"content": [{"type": "text", "text": json.dumps(value, indent=1, sort_keys=True)}], "isError": False}
         if isinstance(value, dict):
             out["structuredContent"] = value
@@ -143,6 +151,48 @@ class McpServer:
                 stdout.write(json.dumps(reply, separators=(",", ":")) + "\n")
                 stdout.flush()
         return 0
+
+
+_TYPES = {"string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,), "object": (dict,),
+          "array": (list,), "null": (type(None),)}
+
+
+def validate_args(schema: dict, args: dict) -> list[str]:
+    """Check ``args`` against the subset of JSON Schema a tool's ``inputSchema`` may use here: top-level
+    ``required``, and per property ``type`` (one name or a list), ``enum`` and ``minimum``. Returns the problems, in a
+    stable order; an empty list means the call goes to the handler. Keys the schema does not name are allowed, as
+    JSON Schema allows them unless ``additionalProperties`` is false, which is honoured too. Anything richer
+    (nested schemas, patterns, formats) is the handler's job: this is a guard, not a validator."""
+    problems = [f"missing required argument {k!r}" for k in schema.get("required", []) if k not in args]
+    props = schema.get("properties", {})
+    if schema.get("additionalProperties") is False:
+        problems += [f"unexpected argument {k!r}" for k in sorted(args) if k not in props]
+    for key, spec in props.items():
+        if key not in args or not isinstance(spec, dict):
+            continue
+        v = args[key]
+        want = spec.get("type")
+        if want is not None:
+            names = want if isinstance(want, list) else [want]
+            ok = any(isinstance(v, _TYPES.get(t, ())) and not (t in ("integer", "number") and isinstance(v, bool))
+                     for t in names)
+            if not ok:
+                problems.append(f"argument {key!r} must be {' or '.join(map(str, names))}, got {_json_type(v)}")
+                continue
+        if "enum" in spec and v not in spec["enum"]:
+            problems.append(f"argument {key!r} must be one of {spec['enum']!r}")
+        if "minimum" in spec and isinstance(v, (int, float)) and not isinstance(v, bool) and v < spec["minimum"]:
+            problems.append(f"argument {key!r} must be at least {spec['minimum']}")
+    return problems
+
+
+def _json_type(v) -> str:
+    if isinstance(v, bool):
+        return "boolean"
+    for name in ("null", "string", "integer", "number", "object", "array"):
+        if isinstance(v, _TYPES[name]):
+            return name
+    return type(v).__name__
 
 
 def _error(rid, code: int, message: str) -> dict:
@@ -208,7 +258,10 @@ def telosmith_server(root: str | Path = ".", records: str | Path | None = None) 
                                "does not establish that a conclusion is true.")
     def records_check(a):
         store = load()
-        found = check(store, sources=_sources(root))
+        try:
+            found = check(store, sources=_sources(root))
+        except ValueError as e:  # `aec check` reports the same refusal as a usage error
+            raise ToolError(f"aec check refused these records: {e}") from e
         return {"source": str(path), "errors": sum(f.level == "error" for f in found),
                 "warnings": sum(f.level == "warning" for f in found), "findings": [asdict(f) for f in found]}
 

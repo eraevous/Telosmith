@@ -1,4 +1,5 @@
 """aec mcp (DEC-256 item 5, slice 1): the MCP server skeleton and Telosmith's read-only record tools."""
+import contextlib
 import io
 import json
 import os
@@ -85,9 +86,52 @@ class TestProtocol(unittest.TestCase):
         r = tool(self.srv, "refuse")
         self.assertTrue(r["isError"])
         self.assertEqual(r["content"][0]["text"], "refused: no")
-        r = tool(self.srv, "crash")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            r = tool(self.srv, "crash")
         self.assertTrue(r["isError"])
         self.assertIn("ZeroDivisionError", r["content"][0]["text"])
+        self.assertIn("division by zero", err.getvalue())  # the detail goes to stderr, for whoever runs the server
+
+    def test_tool_exception_message_is_not_returned(self):  # Kate's AEC-R-mcp-tool-contract@1: no environment details
+        @self.srv.tool("leaky", "raises with a path in its message")
+        def leaky(a):
+            raise OSError("cannot open /home/someone/secret/thing.txt")
+        with contextlib.redirect_stderr(io.StringIO()):
+            r = tool(self.srv, "leaky")
+        self.assertTrue(r["isError"])
+        self.assertEqual(r["content"][0]["text"], "leaky failed: internal error (OSError)")
+
+    def test_arguments_are_checked_against_the_input_schema(self):  # AEC-R-mcp-tool-contract@1
+        seen = []
+
+        @self.srv.tool("typed", "typed arguments", {
+            "type": "object", "required": ["name"], "additionalProperties": False, "properties": {
+                "name": {"type": "string"}, "n": {"type": "integer", "minimum": 1},
+                "mode": {"type": "string", "enum": ["a", "b"]}, "maybe": {"type": ["string", "null"]}}})
+        def typed(a):
+            seen.append(a)
+            return {"ok": True}
+
+        cases = [
+            ({}, "missing required argument 'name'"),
+            ({"name": 3}, "argument 'name' must be string, got integer"),
+            ({"name": "x", "n": True}, "argument 'n' must be integer, got boolean"),
+            ({"name": "x", "n": 1.5}, "argument 'n' must be integer, got number"),
+            ({"name": "x", "n": 0}, "argument 'n' must be at least 1"),
+            ({"name": "x", "mode": "c"}, "argument 'mode' must be one of ['a', 'b']"),
+            ({"name": "x", "other": 1}, "unexpected argument 'other'"),
+        ]
+        for args, problem in cases:
+            r = tool(self.srv, "typed", args)
+            self.assertTrue(r["isError"], args)
+            self.assertIn(problem, r["content"][0]["text"])
+        self.assertEqual(seen, [])  # the handler never ran on a bad call
+        for args in ({"name": "x"}, {"name": "x", "n": 2, "mode": "b", "maybe": None}, {"name": "x", "maybe": "y"}):
+            self.assertFalse(tool(self.srv, "typed", args)["isError"], args)
+        self.assertEqual(len(seen), 3)
+
+    def test_undeclared_arguments_pass_when_the_schema_allows_them(self):
+        self.assertFalse(tool(self.srv, "echo", {"x": "hi", "extra": 1})["isError"])
 
     def test_non_string_tool_name_is_invalid_params(self):  # Codex P2 on 71323e6: {"name": []} raised TypeError
         for bad in ([], {}, 1, None):
@@ -154,6 +198,37 @@ class TestTelosmithTools(unittest.TestCase):
         r = tool(self.srv, "records_check")["structuredContent"]
         self.assertGreaterEqual(r["errors"], 1)
         self.assertTrue(any(f["ref"] == "R2@1" for f in r["findings"]))
+
+    def test_records_are_read_fresh_on_each_call(self):  # AEC-R-mcp-record-reads@1
+        self.assertEqual(tool(self.srv, "records_list", {"id_prefix": "R3"})["structuredContent"]["count"], 0)
+        with (self.root / ".aec" / "records.jsonl").open("a") as f:
+            f.write(json.dumps({"id": "R3", "version": 1, "type": "requirement", "text": "added later",
+                                "relations": [{"rel": "serves", "to": "P0@2"}]}) + "\n")
+        r = tool(self.srv, "records_list", {"id_prefix": "R3"})["structuredContent"]
+        self.assertEqual([i["ref"] for i in r["items"]], ["R3@1"])
+        self.assertEqual(tool(self.srv, "record_get", {"ref": "R3"})["structuredContent"]["record"]["text"],
+                         "added later")
+
+    def test_records_check_matches_aec_check(self):  # AEC-R-mcp-record-reads@1: same file, same findings
+        from dataclasses import asdict
+
+        from aec.records import Store, check
+        from aec.sources import SourceContext
+        want = [asdict(f) for f in check(Store.load(self.root / ".aec" / "records.jsonl"),
+                                         sources=SourceContext(self.root))]
+        r = tool(self.srv, "records_check")["structuredContent"]
+        self.assertEqual(r["findings"], want)
+        self.assertEqual(r["errors"], sum(f["level"] == "error" for f in want))
+        cli = subprocess.run([sys.executable, "-m", "aec", "check", str(self.root / ".aec" / "records.jsonl")],
+                             capture_output=True, text=True, env={**os.environ, "PYTHONPATH": str(ROOT / "src")})
+        self.assertIn(f"aec check: {r['errors']} error(s), {r['warnings']} warning(s)", cli.stdout)
+
+    def test_wrongly_typed_arguments_never_reach_the_record_tools(self):
+        for name, args in (("records_list", {"limit": "5"}), ("records_list", {"all_versions": "yes"}),
+                           ("record_get", {"ref": ["P0"]}), ("record_get", {})):
+            r = tool(self.srv, name, args)
+            self.assertTrue(r["isError"], (name, args))
+            self.assertIn("invalid arguments", r["content"][0]["text"])
 
     def test_missing_or_bad_records_are_tool_errors(self):
         (self.root / ".aec" / "records.jsonl").unlink()
