@@ -20,7 +20,7 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ### Added (AEC-R-init-line-pin-bootstrap@1, AEC-R-init-pin-preservation@1)
 - `aec init --hook-style line` also writes `tools/aec_upstream.json` with the commit the CI snippet pins, so the
-  line hook and `aec pin-check` find the pin they require. An existing file (or a symlink) there is kept, never
+  `aec pin-check` (and the line hook, once its launcher has the pin gate from #92) find the pin they read. An existing file (or a symlink) there is kept, never
   overwritten; a symlinked `tools/` is never written through. The inline default and `--no-hooks` write no pin file.
 
 ### Added

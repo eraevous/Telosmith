@@ -3,9 +3,9 @@
 Kate's AEC-R-init-line-pin-bootstrap@1, AEC-R-init-pin-preservation@1 and AEC-R-init-unresolved-pin-no-write@1
 (independent); AEC-R-init-writes-pin-file-impl@2 (implementer).
 
-The one-line hook runs only an aec pip-installed from git at the commit in tools/aec_upstream.json
-(AEC-R-hook-line-pin-gate@1, AEC-D-pin-check-scope@1). Without that file it refuses to run, so a repository
-set up with the line style needs one. init writes it with the commit the CI snippet pins, keeps any existing
+`aec pin-check` compares the installed aec against the commit in tools/aec_upstream.json, and the one-line
+hook does too once its launcher has the pre-import pin gate (#92; AEC-R-hook-line-pin-gate@1,
+AEC-D-pin-check-scope@1). Neither works without that file, so a repository set up with the line style needs one. init writes it with the commit the CI snippet pins, keeps any existing
 file, and never writes through a symlinked tools/ directory. The inline default writes no pin file.
 Commit resolution is mocked: these tests touch no network."""
 import json
@@ -52,6 +52,10 @@ class InitPinFile(unittest.TestCase):
         self.assertEqual(data["repo"], "https://github.com/eraevous/Telosmith")
         self.assertIn(f"Telosmith.git@{SHA}\"", (self.root / ".aec/snippets/aec-ci.yml").read_text())
         self.assertIn(f"Commit tools/aec_upstream.json: it pins Telosmith commit {SHA}", rep["next_steps"])
+        # Copilot on #93: the file and next step must not promise hook enforcement the launcher may not have yet
+        for text in (data["_doc"], rep["next_steps"]):
+            self.assertIn("pin-check", text)
+            self.assertIn("#92", text)
 
     def test_inline_default_writes_no_pin_file(self):
         for kwargs in ({}, {"hook_style": "inline"}):

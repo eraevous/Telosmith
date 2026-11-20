@@ -404,9 +404,11 @@ PIN_FILE = Path("tools") / "aec_upstream.json"   # the one pin source (AEC-D-pin
 def pin_json(commit: str) -> str:
     """The pin file `aec init --hook-style line` writes: MtG's format, reduced to what the hook and pin-check read."""
     return json.dumps({
-        "_doc": "The Telosmith commit this repository follows. The one-line Claude Code hook runs only an aec "
-                "pip-installed from git at exactly this commit, and `aec pin-check` compares against it. Keep "
-                "the CI job's install line on the same commit. Written by aec init; edit it to move the pin.",
+        "_doc": "The Telosmith commit this repository follows. `aec pin-check` compares the installed aec "
+                "against it. A one-line Claude Code hook enforces it only when its launcher carries the "
+                "pre-import pin gate (Telosmith#92, AEC-R-hook-line-pin-gate@1); without that gate the hook does "
+                "not read this file. Keep the CI job's install line on the same commit. Written by aec init; "
+                "edit it to move the pin.",
         "repo": "https://github.com/eraevous/Telosmith",
         "commit": commit,
     }, indent=2) + "\n"
@@ -492,8 +494,8 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
         put(f"snippets/{ci_name}-ci.yml", lambda: ci_snippet(ref, ci_name))
     pin_state = None
     if hooks and hook_style == "line":
-        # The line hook runs only the aec that tools/aec_upstream.json pins (AEC-R-hook-line-pin-gate@1), so the
-        # repository needs that file: write it with the commit the CI snippet pins, never over an existing one,
+        # aec pin-check, and the line hook once its launcher has the pin gate (AEC-R-hook-line-pin-gate@1, #92),
+        # read tools/aec_upstream.json, so the repository needs that file: write it with the commit the CI snippet pins, never over an existing one,
         # and never through a symlinked tools/ directory (AEC-R-init-writes-pin-file-impl@2).
         pin_key = PIN_FILE.as_posix()
         tools = root / PIN_FILE.parent
@@ -528,14 +530,18 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
                    "editing .claude/settings.json. To go back, run `aec init --hooks --hook-style inline` in an empty "
                    "directory and copy its .aec/snippets/claude-settings.json over.")]
         if pin_state == "created":
-            steps.append(f"Commit {PIN_FILE.as_posix()}: it pins Telosmith commit {ref}, the one the line hook "
-                         "will run (aec pin-check reads it too). Move it and the CI job's commit together.")
+            steps.append(f"Commit {PIN_FILE.as_posix()}: it pins Telosmith commit {ref}, the commit aec pin-check "
+                         "compares against. The line hook enforces it only once its launcher has the pin gate "
+                         "(Telosmith#92); until then run aec pin-check yourself. Move it and the CI job's commit "
+                         "together.")
         elif pin_state == "kept":
-            steps.append(f"{PIN_FILE.as_posix()} already existed and was kept, not rewritten: the line hook runs "
-                         f"only the aec it pins, so check that it names {ref} or install the commit it names.")
+            steps.append(f"{PIN_FILE.as_posix()} already existed and was kept, not rewritten: aec pin-check (and a "
+                         f"gated line hook, Telosmith#92) compare against it, so check that it names {ref} or "
+                         "install the commit it names.")
         elif pin_state == "blocked":
             steps.append(f"{PIN_FILE.as_posix()} was not written: {PIN_FILE.parent.as_posix()} is a symlink or not "
-                         "a directory. Until a regular file there names a full commit, the line hook refuses to run.")
+                         "a directory. Until a regular file there names a full commit, aec pin-check fails (and so "
+                         "would a gated line hook, Telosmith#92).")
     else:
         steps.append("No hook or CI snippet written: " + ("this repository has no Python code, so code-impact has "
                      "nothing to report. Re-run `aec init --hooks` after adding code." if snapshot["header"]["files"] == 0
