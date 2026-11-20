@@ -56,8 +56,16 @@ class ValidateCard(unittest.TestCase):
     def good(self):
         return a2a.build_card(**BASE, skills=[a2a.skill("a", "A", "Does a.", ["t"])])
 
-    def test_not_an_object(self):
-        self.assertEqual(a2a.validate_card([]), ["the card is not a JSON object"])
+    def test_not_an_object(self):  # AEC-R-a2a-card-validation@1: root scalars, null and lists
+        for root in ([], None, 3, "card", True):
+            self.assertEqual(a2a.validate_card(root), ["the card is not a JSON object"], root)
+
+    def test_independent_defects_are_reported_together(self):
+        card = self.good()
+        del card["name"]
+        card["version"] = ""
+        card["skills"][0]["tags"] = []
+        self.assertEqual(len(a2a.validate_card(card)), 3)
 
     def test_each_missing_required_field_is_named(self):
         for k in a2a.CARD_REQUIRED:
