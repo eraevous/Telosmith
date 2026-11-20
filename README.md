@@ -1,16 +1,49 @@
 # Telosmith
 
-**Telosmith keeps the recorded reasons for code attached to the code, and tells you which requirements, claims and decisions need reassessing when something they depend on changes.**
+**Tests catch broken behaviour; they don't catch a broken *reason*.**
+
+Telosmith is a Python command-line tool for requirements traceability and change-impact analysis,
+built for developers working with AI coding agents. You record why code exists—requirements,
+claims, evidence and decisions—and link those records to code. When recorded support changes,
+Telosmith reports which conclusions need another look.
+
+It reports structure, not truth: “this conclusion's recorded support changed”, never “this
+conclusion is false”. Records are authored, not inferred; Python static analysis has blind spots.
+Telosmith is alpha, and improved development outcomes have not been demonstrated.
+
+## Try it on a toy project
+
+With Python 3.10+, Git and Bash, clone the repository and run its bundled example. No package
+installation or AI service is needed; after the clone, the example runs offline.
+
+```bash
+git clone https://github.com/eraevous/Telosmith.git
+cd Telosmith
+PYTHONPATH="$PWD/src" bash examples/without-spec-kit/run.sh
+```
+
+The script creates temporary Git repositories, makes toy code edits, and runs the hooks by hand.
+Look for `[stale] R-1@1` and `[needs_review] C-1@1` after the linked function changes; nearby
+changes within the configured reach produce pointers without changing a record's status. It also demonstrates optional
+commit blocking and an append-only guard, then removes its temporary repositories.
+
+Ready to use it on your own code? Start with [installation](#install) and the
+[getting-started guide](docs/guide/getting-started.md). Prefer to walk through each step?
+Read the [annotated toy example](docs/demo.md). To judge whether it is worth the record-writing,
+see [evidence and limitations](#evidence-and-limitations).
+
+## Background and reference
 
 *Formerly AEC, renamed in November 2026. The `aec` command, the Python package `aec` and the `.aec/`
 folder keep working. Since v0.5 the same command is also installed as `telosmith`; the examples use `aec`,
 which every release has and which stays the primary name.*
 
-It reports structure, not truth: "this conclusion's recorded support changed", never "this
-conclusion is false". It is a standard-library Python command-line tool that never edits your code
-or your specs, and it works in three settings: as a [Spec Kit](https://github.com/github/spec-kit)
+The standard-library CLI is built to support three settings: as a [Spec Kit](https://github.com/github/spec-kit)
 extension; as an extension of other agentic coding setups (Claude Code hooks, git hooks, CI, rules
-files); and standalone, with just the records and the `check` and `impact` commands. See
+files); and standalone, with just the records and the `check` and `impact` commands.
+The Spec Kit extension's installation is tested against CLI v1.2.3; use in a real Spec Kit
+workflow is untested. Hooks have been exercised directly, not demonstrated inside a live
+Claude Code session. See
 [docs/use-cases.md](docs/use-cases.md) and
 [docs/integrations/without-spec-kit.md](docs/integrations/without-spec-kit.md).
 
@@ -18,7 +51,7 @@ files); and standalone, with just the records and the `check` and `impact` comma
 
 AI coding agents are good at making a change and bad at knowing what else depended on the old
 behaviour: a requirement someone wrote down, a claim a decision rested on, a caller nobody
-mentioned. Tests catch broken behaviour; they don't catch a broken *reason*.
+mentioned.
 
 For example, an agent "simplifies" `hmac.compare_digest(sig, expected)` to `sig == expected` in
 [pallets/itsdangerous](https://github.com/pallets/itsdangerous). All 297 of the library's tests
@@ -32,7 +65,7 @@ agent) write the records. Telosmith doesn't infer them.
 
 What the Claude Code hook catches, exactly, at its default depth of one call:
 
-- **an edit to a function a record links to**: the hook stops the agent and prints the requirement's text and
+- **an edit to a function a record links to**: the hook reports after the edit, printing the requirement's text and
   every claim resting on it (`[stale]`, `[needs_review]`);
 - **an edit to a function that linked function calls** (one hop): a pointer by record ID
   (`candidate for attention: R-1@1`), with no text and no status change;
@@ -51,9 +84,14 @@ pip install "git+https://github.com/eraevous/Telosmith.git@main"   # 0.5.0 on ma
 aec --version        # aec 0.5.0 (telosmith --version works too)
 ```
 
-Python 3.10 or newer; no other dependencies.
+Python 3.10 or newer; no runtime dependencies beyond the standard library.
 
-## Quickstart
+CI includes a local-checkout package-install test, not the Git-URL install above. In the
+[README accuracy review](https://github.com/eraevous/Telosmith/pull/86#pullrequestreview-5932202647),
+the reviewer separately checked `pip install .` from this checkout on Python 3.13 only;
+that manual check did not cover the Git URL or other Python versions.
+
+## Set up your own records
 
 ```bash
 cd your-project
@@ -82,8 +120,8 @@ to change one, append the same `id` with `"version": 2`.
 The record types you'll use most are `purpose`, `requirement`, `claim`, `evidence` and `decision`, and
 the relations are `implemented_by` (to `code:` names), `depends_on`, `serves` and `supports`. All of them
 are listed in [docs/reasoning-vocabulary.md](docs/reasoning-vocabulary.md). `aec init` also prints its
-own next steps: replace its placeholder purpose record (`P0`) with yours, and optionally copy its CI and
-Claude Code hook snippets into place. The
+own next steps: append version 2 of its placeholder purpose record (`P0`) with your own purpose,
+and optionally copy its CI and Claude Code hook snippets into place. The
 [getting-started guide](docs/guide/getting-started.md) covers comparing against a branch, CI and the
 Claude Code hook, and repositories with existing Codex++ purpose files.
 
@@ -102,7 +140,11 @@ Each conclusion that relied on something that changed gets a review disposition,
 | `contested` | new evidence contradicts it |
 
 Decisions are never declared unjustified by the tool; they belong to a human authority and are
-flagged for review. The full vocabulary is in [docs/reasoning-vocabulary.md](docs/reasoning-vocabulary.md).
+flagged for review. An accepted decision must name an authority that governs its subject;
+authority does not transfer through a chain of references. An `authorized_by` field is a claim:
+the tool checks the named authority's recorded scope, not whether the person actually consented.
+Spec Kit, when used, still owns the specification workflow; a report is a review item, not permission
+to revise a commitment. The full vocabulary is in [docs/reasoning-vocabulary.md](docs/reasoning-vocabulary.md).
 
 ## Worked example
 
@@ -135,7 +177,13 @@ what to look for wrote the requirement down, so it demonstrates the mechanism, n
 ## Stability
 
 Telosmith is alpha (v0.5). v0.5 adds the snapshot, diff, reach, fan, unresolved, anchor and
-append commands to the seven commands of v0.4, fourteen in all; see [the structural reference](docs/reference/edges.md). A minor
+append commands to the seven commands of v0.4; see [the structural reference](docs/reference/edges.md).
+This checkout also includes [Spec Kit derived blocks and drift reports](docs/integrations/spec-kit-derive.md)
+and a [user-level hook prototype](docs/integrations/user-level-hook.md), untested in a live session.
+Explicit derivation can update record-derived spec blocks; `speckit derive --insert` adds a new
+derived block where none exists, after `## Requirements` or at the end of the authored file.
+Other authored text is left alone. These mechanisms do not establish semantic correctness, verified consent or general governance enforcement. Automatic
+reasoning-drift triggers and handoff premise checks remain planned. A minor
 version before 1.0 may change output formats or record fields; every change is
 listed in [CHANGELOG.md](CHANGELOG.md). The extractor's tool_version (0.4.1) is separate
 from the package version. Snapshot comparison refuses mismatched methods, including
@@ -145,7 +193,7 @@ legacy/unknown methods; an explicit override labels a method comparison.
 
 | If you want to… | Read |
 |---|---|
-| see the whole loop in 90 seconds | [docs/demo.md](docs/demo.md) |
+| walk through the whole loop | [docs/demo.md](docs/demo.md) |
 | set Telosmith up in a real repository | [Getting started](docs/guide/getting-started.md) |
 | understand the edge snapshot | [docs/reference/edges.md](docs/reference/edges.md) |
 | anchor records to source passages | [docs/reference/source-anchors.md](docs/reference/source-anchors.md) |
