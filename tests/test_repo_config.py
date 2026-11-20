@@ -73,6 +73,36 @@ class Discovery(unittest.TestCase):
             self.assertIsNone(cfg.root)
             self.assertEqual(cfg.get("records"), config.DEFAULTS["records"])
 
+    def test_git_file_marks_the_top(self):
+        # a worktree or submodule has a .git *file*; it still bounds the walk (Kate, AEC-R-repo-config-loading@2)
+        with Repo() as r:
+            r.write({"records": "x.jsonl"})
+            inner = r.root / "worktree"
+            inner.mkdir()
+            (inner / ".git").write_text("gitdir: elsewhere\n")
+            self.assertIsNone(config.load(inner).root)
+
+    def test_nearer_aec_without_config_does_not_fall_through(self):
+        with Repo() as r:
+            r.write({"records": "outer.jsonl"})
+            nested = r.root / "pkg"
+            (nested / ".aec").mkdir(parents=True)
+            cfg = config.load(nested)
+            self.assertEqual(cfg.root, nested)
+            self.assertIsNone(cfg.path)
+            self.assertEqual(cfg.get("records"), config.DEFAULTS["records"])
+
+    def test_paths_resolve_independently_of_the_working_directory(self):
+        with Repo() as r, tempfile.TemporaryDirectory() as elsewhere:
+            r.write({"records": "records/main.jsonl"})
+            here = os.getcwd()
+            try:
+                os.chdir(elsewhere)
+                cfg = config.load(r.root)
+                self.assertEqual(cfg.path_of("records"), r.root / "records" / "main.jsonl")
+            finally:
+                os.chdir(here)
+
 
 class Validation(unittest.TestCase):
     def bad(self, doc, *fragments):
@@ -169,6 +199,16 @@ class Precedence(unittest.TestCase):
             code, out, _ = run(["init", str(r.root), "--owner", "o"])
             self.assertEqual(code, 0)
             self.assertNotIn("hook project", (r.root / ".aec" / "snippets" / "claude-settings.json").read_text())
+
+    def test_init_ignores_an_ancestor_config(self):
+        with Repo() as r:
+            r.write({"init": {"hook_style": "both"}})   # invalid, and a parent's: init must not read it
+            child = r.root / "child"
+            child.mkdir()
+            (child / "m.py").write_text("x = 1\n")
+            code, _, err = run(["init", str(child), "--owner", "o"])
+            self.assertEqual(code, 0, err)
+            self.assertNotIn("hook project", (child / ".aec" / "snippets" / "claude-settings.json").read_text())
 
     def test_invalid_config_stops_init_before_writing(self):
         with Repo() as r:

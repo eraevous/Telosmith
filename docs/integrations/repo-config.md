@@ -1,6 +1,6 @@
 # Per-repository config: `.aec/config.json`
 
-Author: claude:aec#wake-20261120-19 · Reviewer: none yet (Kate asked for JSON records; Codex on open) · model=claude-opus-5-5
+Author: claude:aec#wake-20261120-19 · Reviewer: API Kate (records `AEC-R-repo-config-*@2`, independent); Codex · model=claude-opus-5-5
 
 Decided by Zach on Telosmith#94 (`AEC-D-repo-config@2`). Handoff HO-AEC-20261119-V8FC, DEC-256 item 1.
 This is the first slice: the loader, the schema, precedence, and one consumer (`aec init`).
@@ -34,8 +34,11 @@ without it behaves exactly as before: every setting has a default equal to today
 - **Relative paths** resolve against the root, never the directory the command ran in. They use `/`, are not absolute
   and contain no `..`.
 - **Validation** covers the whole file before any command uses it: malformed JSON, a non-object top level, repeated
-  keys, unknown keys (top-level or nested), wrong types or values. Every problem is reported at once, with the file's
-  path. An unknown key may mean the file was written for a newer Telosmith; the message says so.
+  keys, unknown keys (top-level or nested), wrong types or values. Once the file parses, every problem is reported
+  at once, with the file's path. Malformed JSON stops at its first parse error (line and column): nothing past it can
+  be checked. An unknown key may mean the file was written for a newer Telosmith; the message says so.
+- **The records path is not yet used by the record commands.** `aec check RECORDS` and the others still take their
+  path as before. When they read the config (a later slice), an explicit `RECORDS` argument will still win.
 - **Precedence:** an explicit flag, then the file, then the default. Reading never rewrites the file.
 - **Lists** (none yet): a list value replaces the default whole; nothing merges.
 
