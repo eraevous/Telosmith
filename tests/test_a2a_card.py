@@ -45,6 +45,18 @@ class BuildCard(unittest.TestCase):
         self.assertEqual(card["skills"][0]["examples"], ["list"])
         self.assertTrue(card["capabilities"]["streaming"])
 
+    def test_flags_and_shapes_are_not_coerced(self):  # Copilot review on 8e3e591
+        for kwargs, needle in (({"streaming": "false"}, "'capabilities.streaming' must be true or false"),
+                               ({"push_notifications": 1}, "'capabilities.pushNotifications' must be true or false"),
+                               ({"input_modes": "text/plain"}, "'defaultInputModes' must be a non-empty list"),
+                               ({"output_modes": None}, "'defaultOutputModes' must be a non-empty list"),
+                               ({"skills": [None]}, "skills[0] must be an object"),
+                               ({"skills": None}, "'skills' must be a list"),
+                               ({"provider": "Org"}, "'provider' must be an object")):
+            with self.assertRaises(a2a.CardError, msg=kwargs) as cm:
+                a2a.build_card(**BASE, **kwargs)
+            self.assertIn(needle, str(cm.exception))
+
     def test_bad_values_raise_naming_each_problem(self):
         with self.assertRaises(a2a.CardError) as cm:
             a2a.build_card(**{**BASE, "name": " ", "url": "ftp://x"})
@@ -172,6 +184,15 @@ class Cli(unittest.TestCase):
             code, out, _ = run(["a2a", "check", str(path)])
             self.assertEqual(code, 0)
             self.assertIn("is an A2A 1.0 Agent Card", out)
+
+    def test_unwritable_destination_is_a_clean_failure(self):  # Copilot review on 8e3e591
+        with tempfile.TemporaryDirectory() as d:
+            blocker = Path(d) / "file"
+            blocker.write_text("x")
+            code, out, err = run(["a2a", "card", "--name", "d", "--description", "D", "--version", "1",
+                                  "--url", "https://e.test", "-o", str(blocker / "card.json")])
+            self.assertEqual((code, out), (1, ""))
+            self.assertIn("cannot write", err)
 
     def test_check_reports_problems_and_unreadable_files(self):
         with tempfile.TemporaryDirectory() as d:

@@ -47,24 +47,32 @@ def build_card(*, name: str, description: str, version: str, url: str, binding: 
                push_notifications: bool = False, input_modes=("text/plain",),
                output_modes=("application/json",), documentation_url: str | None = None) -> dict:
     """Return an A2A 1.0 Agent Card as a dict, or raise CardError naming every problem."""
+    # Copy lists and objects without coercing them: a wrong shape or a non-boolean flag
+    # stays as given so validate_card reports it (CardError), never a TypeError or a silent change.
     card = {
         "name": name,
         "description": description,
         "supportedInterfaces": [{"url": url, "protocolBinding": binding, "protocolVersion": PROTOCOL_VERSION}],
         "version": version,
-        "capabilities": {"streaming": bool(streaming), "pushNotifications": bool(push_notifications)},
-        "defaultInputModes": list(input_modes),
-        "defaultOutputModes": list(output_modes),
-        "skills": [dict(s) for s in skills],
+        "capabilities": {"streaming": streaming, "pushNotifications": push_notifications},
+        "defaultInputModes": _as_list(input_modes),
+        "defaultOutputModes": _as_list(output_modes),
+        "skills": [dict(s) if isinstance(s, dict) else s for s in skills]
+                  if isinstance(skills, (list, tuple)) else skills,
     }
     if provider is not None:
-        card["provider"] = dict(provider)
+        card["provider"] = dict(provider) if isinstance(provider, dict) else provider
     if documentation_url:
         card["documentationUrl"] = documentation_url
     problems = validate_card(card)
     if problems:
         raise CardError("; ".join(problems))
     return card
+
+
+def _as_list(v):
+    """A list or tuple becomes a list; anything else (a string, None) is kept for validate_card to report."""
+    return list(v) if isinstance(v, (list, tuple)) else v
 
 
 def _nonempty_str(v) -> bool:
@@ -256,8 +264,17 @@ def cli(a, ap) -> int:
     if out.exists() or out.is_symlink():
         print(f"a2a card: {out} exists; not overwriting", file=sys.stderr)
         return 1
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with open(out, "x", encoding="utf-8") as fh:
-        fh.write(text)
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)  # FileExistsError here: a parent is a file
+        try:
+            fh = open(out, "x", encoding="utf-8")
+        except FileExistsError:  # created between the check above and the exclusive open
+            print(f"a2a card: {out} exists; not overwriting", file=sys.stderr)
+            return 1
+        with fh:
+            fh.write(text)
+    except OSError as exc:
+        print(f"a2a card: cannot write {out}: {exc.strerror or type(exc).__name__}", file=sys.stderr)
+        return 1
     print(f"a2a card: wrote {out}")
     return 0
