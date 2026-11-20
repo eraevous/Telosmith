@@ -135,14 +135,21 @@ blocking condition):
 The enforcement policy stays advisory.
 
 **Status of D (opt-in step, `aec init --hook-style line`):** the body ships as `aec hook project`; the line keeps only
-the launcher and two diagnostics. Against the gates above:
-- pinned local resolution: **not met**. The line runs whichever aec the launcher resolves, as the inline hook does;
-- missing-install and too-old diagnostics: met for "no aec importable" and "aec without `hook project`"; a mismatch
-  with CI's pin is not detected (same gap as the first gate);
+the launcher and a pre-import gate (Kate's `AEC-R-hook-launcher-preimport@1` and `AEC-R-hook-line-pin-gate@1`, under
+`AEC-D-pin-check-scope@1`). Against the gates above:
+- pinned local resolution: **met in the line**, pending review. Before any aec code runs, one `python3 -I -B` process
+  reads `commit` from `tools/aec_upstream.json`, finds `aec` without importing it, and runs it only if it belongs to a
+  non-editable pip install from git (PEP 610) of exactly that commit, outside the project; it then loads that same
+  package and runs `aec hook project` in the same process. A source checkout, an editable install, a shadowing aec
+  earlier on the path, or a missing or malformed pin exits 1 with one line saying which;
+- missing-install, too-old and mismatch diagnostics: met;
 - compatibility: `tests/test_project_hook_line.py` runs both hooks on the same checkouts and compares exit codes;
 - rollback: `aec init --hooks --hook-style inline` in an empty directory gives the inline snippet to copy back.
 
-So `inline` stays the default and no repository's hook is replaced until the first gate is met.
+The line needs `tools/aec_upstream.json`, which `aec init` does not write yet (a follow-up). Tampering with the
+installed environment stays out of scope (the user-level hook verifies RECORD).
+
+So `inline` stays the default. Replacing any repository's hook is a separate step, after review of the gate.
 
 Until D lands (it changes `aec init` output and is its own PR), the handoff's interim applies: propagate the method via
 the lane-rules change and one Telosmith release pin.
