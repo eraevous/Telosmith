@@ -2,7 +2,9 @@
 
 The gate Kate set on Telosmith#88 and wrote as `AEC-R-hook-line-pin-gate@1`: no repository's hook is replaced
 by the one-line form until the launcher refuses to run when the local aec and the pin differ, or when their
-equality cannot be established. This module is that check.
+equality cannot be established. This module is that check as a command; the line launcher itself makes the same
+decision before importing aec (`HOOK_LINE_GATE` in init.py, Kate's AEC-R-hook-launcher-preimport@1), because code in
+the aec it checks must not run first.
 
 Owner decision `AEC-D-pin-check-scope@1` (Zach, 2026-11-18, on #90) narrows it to what can be established
 without guessing:
