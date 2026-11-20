@@ -130,6 +130,13 @@ class TestProtocol(unittest.TestCase):
             self.assertFalse(tool(self.srv, "typed", args)["isError"], args)
         self.assertEqual(len(seen), 3)
 
+    def test_falsy_non_object_arguments_or_params_are_refused(self):  # Codex P2 on e4e59c3: `or {}` hid them
+        for bad in ([], False, 0, ""):
+            self.assertEqual(call(self.srv, "tools/call", {"name": "echo", "arguments": bad})["error"]["code"], -32602)
+            self.assertEqual(call(self.srv, "ping", bad)["error"]["code"], -32602)
+        for omitted in ({"name": "echo"}, {"name": "echo", "arguments": None}):
+            self.assertFalse(call(self.srv, "tools/call", omitted)["result"]["isError"])
+
     def test_undeclared_arguments_pass_when_the_schema_allows_them(self):
         self.assertFalse(tool(self.srv, "echo", {"x": "hi", "extra": 1})["isError"])
 
@@ -229,6 +236,15 @@ class TestTelosmithTools(unittest.TestCase):
             r = tool(self.srv, name, args)
             self.assertTrue(r["isError"], (name, args))
             self.assertIn("invalid arguments", r["content"][0]["text"])
+
+    def test_every_record_derived_result_carries_the_notice(self):  # AEC-R-mcp-record-trust@1 (Codex P2, e4e59c3)
+        self.assertIn("untrusted data", tool(self.srv, "records_list")["structuredContent"]["notice"])
+        self.assertIn("untrusted data", tool(self.srv, "records_check")["structuredContent"]["notice"])
+        (self.root / ".aec" / "records.jsonl").write_text("{broken\n")
+        for name in ("records_list", "record_get", "records_check"):
+            r = tool(self.srv, name, {"ref": "P0"} if name == "record_get" else {})
+            self.assertTrue(r["isError"])
+            self.assertIn("untrusted data", r["content"][0]["text"])
 
     def test_missing_or_bad_records_are_tool_errors(self):
         (self.root / ".aec" / "records.jsonl").unlink()

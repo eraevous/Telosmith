@@ -78,7 +78,8 @@ class McpServer:
             return _error(rid, INVALID_REQUEST, "expected one JSON-RPC 2.0 request object (batches are not supported)")
         if "id" not in msg:
             return None  # a notification (notifications/initialized, cancelled, ...): never answered
-        rid, method, params = msg["id"], msg["method"], msg.get("params") or {}
+        rid, method = msg["id"], msg["method"]
+        params = {} if msg.get("params") is None else msg["params"]  # only an omitted params defaults ([] is refused)
         if not isinstance(params, dict):
             return _error(rid, INVALID_PARAMS, "params must be an object")
         try:
@@ -107,7 +108,8 @@ class McpServer:
         return out
 
     def _call(self, params: dict) -> dict:
-        name, args = params.get("name"), params.get("arguments") or {}
+        name = params.get("name")
+        args = {} if params.get("arguments") is None else params["arguments"]  # Codex P2 on e4e59c3: [] or 0 is refused
         if not isinstance(name, str) or name not in self.tools:  # an object or array name is unhashable (Codex P2, #95)
             raise RpcError(INVALID_PARAMS, f"unknown tool: {name!r}")
         if not isinstance(args, dict):
@@ -218,7 +220,7 @@ def telosmith_server(root: str | Path = ".", records: str | Path | None = None) 
         try:
             return Store.load(path)
         except (OSError, UnicodeDecodeError, ValueError, KeyError) as e:
-            raise ToolError(f"cannot read {path}: {type(e).__name__}: {e}") from e
+            raise ToolError(f"cannot read {path}: {type(e).__name__}: {e}\n{NOTICE}") from e
 
     @srv.tool("records_list", "List records (latest version of each id by default), filtered by type or id prefix.", {
         "type": "object", "properties": {
@@ -261,9 +263,10 @@ def telosmith_server(root: str | Path = ".", records: str | Path | None = None) 
         try:
             found = check(store, sources=_sources(root))
         except ValueError as e:  # `aec check` reports the same refusal as a usage error
-            raise ToolError(f"aec check refused these records: {e}") from e
+            raise ToolError(f"aec check refused these records: {e}\n{NOTICE}") from e
         return {"source": str(path), "errors": sum(f.level == "error" for f in found),
-                "warnings": sum(f.level == "warning" for f in found), "findings": [asdict(f) for f in found]}
+                "warnings": sum(f.level == "warning" for f in found), "findings": [asdict(f) for f in found],
+                "notice": NOTICE}  # findings quote record values (Codex P2 on e4e59c3; AEC-R-mcp-record-trust@1)
 
     return srv
 
