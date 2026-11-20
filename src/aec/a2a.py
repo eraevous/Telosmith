@@ -81,6 +81,31 @@ def _http_url(v) -> bool:
     return p.scheme in ("http", "https") and bool(p.netloc)
 
 
+def _grpc_address(v) -> bool:
+    """gRPC interfaces use `host:port` (A2A AgentInterface); a URL is also accepted."""
+    if not _nonempty_str(v):
+        return False
+    if "://" in v:
+        try:
+            return bool(urlparse(v).netloc)
+        except ValueError:
+            return False
+    host, sep, port = v.rpartition(":")
+    return (bool(sep) and host != "" and not any(c.isspace() or c == "/" for c in host)
+            and port.isdigit() and 0 < int(port) < 65536)
+
+
+def _interface_url_problem(f: dict, where: str) -> str | None:
+    """HTTP-based (or missing) bindings need an absolute http(s) URL; GRPC host:port; other (open) bindings a non-empty string."""
+    binding, url = f.get("protocolBinding"), f["url"]
+    if binding == "GRPC":
+        return None if _grpc_address(url) else f"{where}.url must be host:port (or a URL) for GRPC"
+    if _nonempty_str(binding) and binding not in BINDINGS:
+        return None if _nonempty_str(url) else f"{where}.url must be a non-empty string"
+    # JSONRPC, HTTP+JSON, or a missing binding (already reported): the strict check
+    return None if _http_url(url) else f"{where}.url must be an absolute http(s) URL"
+
+
 def _str_list(v, *, nonempty: bool) -> bool:
     return isinstance(v, list) and all(_nonempty_str(x) for x in v) and (bool(v) or not nonempty)
 
@@ -115,8 +140,10 @@ def validate_card(card) -> list[str]:
                     problems.append(f"{where} must be an object")
                     continue
                 problems += [f"{where} is missing {k!r}" for k in INTERFACE_REQUIRED if k not in f]
-                if "url" in f and not _http_url(f["url"]):
-                    problems.append(f"{where}.url must be an absolute http(s) URL")
+                if "url" in f:
+                    problem = _interface_url_problem(f, where)
+                    if problem:
+                        problems.append(problem)
                 for k in ("protocolBinding", "protocolVersion"):
                     if k in f and not _nonempty_str(f[k]):
                         problems.append(f"{where}.{k} must be a non-empty string")

@@ -110,6 +110,18 @@ class ValidateCard(unittest.TestCase):
         self.assertEqual((code, out), (1, ""))
         self.assertIn("http(s) URL", err)
 
+    def test_interface_address_follows_the_binding(self):  # Codex P2 on da72235
+        card = a2a.build_card(**{**BASE, "url": "grpc.example.test:443"}, binding="GRPC")
+        self.assertEqual(card["supportedInterfaces"][0]["url"], "grpc.example.test:443")
+        for bad in ("grpc.example.test", "grpc.example.test:0", "grpc.example.test:http", ":443", "a b:443"):
+            card["supportedInterfaces"][0]["url"] = bad
+            self.assertIn("supportedInterfaces[0].url must be host:port (or a URL) for GRPC",
+                          a2a.validate_card(card), bad)
+        card["supportedInterfaces"][0].update(protocolBinding="HTTP+JSON", url="grpc.example.test:443")
+        self.assertIn("supportedInterfaces[0].url must be an absolute http(s) URL", a2a.validate_card(card))
+        card["supportedInterfaces"][0].update(protocolBinding="CUSTOM", url="custom:anything")
+        self.assertEqual(a2a.validate_card(card), [])
+
     def test_never_raises_on_odd_shapes(self):
         for odd in ({"skills": [1, None]}, {"supportedInterfaces": "x"}, {"capabilities": []}, {"provider": 3}):
             self.assertIsInstance(a2a.validate_card({**self.good(), **odd}), list)

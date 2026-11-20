@@ -38,7 +38,7 @@ A2A protocol version 1.0. The fields checked as required:
 | Object | Required fields |
 |---|---|
 | AgentCard | `name`, `description`, `supportedInterfaces`, `version`, `capabilities`, `defaultInputModes`, `defaultOutputModes`, `skills` |
-| AgentInterface (each `supportedInterfaces` entry) | `url` (absolute http or https), `protocolBinding`, `protocolVersion` |
+| AgentInterface (each `supportedInterfaces` entry) | `url` (absolute http or https for `JSONRPC` and `HTTP+JSON`; `host:port` or a URL for `GRPC`; any non-empty string for other bindings), `protocolBinding`, `protocolVersion` |
 | AgentSkill | `id` (unique in the card), `name`, `description`, `tags` (non-empty) |
 | AgentProvider (optional) | `organization`, `url` |
 
