@@ -103,6 +103,7 @@ class Validation(unittest.TestCase):
         self.bad({"version": 2}, "version")
         self.bad({"version": True}, "version")
         self.bad({"init": []}, "init: must be an object")
+        self.bad({"init": None}, "init: must be an object")  # explicit null is not "absent" (Copilot, #97)
         self.bad({"init": {"hook_style": "both"}}, "init.hook_style")
         self.bad({"init": {"hook_style": []}}, "init.hook_style")   # unhashable: no TypeError (Codex, #97)
         self.bad({"init": {"hook_style": {}}, "x": 1}, "init.hook_style", "'x'")
@@ -120,6 +121,10 @@ class Validation(unittest.TestCase):
         self.bad("{not json", "not valid JSON", "line 1")
         self.bad("[1, 2]", "JSON object")
         self.bad('{"records": "a.jsonl", "records": "b.jsonl"}', "repeated key 'records'")
+        # a repeated key no longer hides the other problems (Copilot, #97)
+        self.bad('{"version": 2, "records": "a.jsonl", "records": "b.jsonl", "init": {"hook_style": "bad"}}',
+                 "repeated key 'records'", "version: this Telosmith", "init.hook_style")
+        self.bad('{"init": {"ci_name": "a", "ci_name": "b"}}', "repeated key 'ci_name'")
 
     def test_every_problem_reported_at_once(self):
         self.bad({"x": 1, "version": 9, "init": {"hook_style": "no"}}, "'x'", "version: this Telosmith",

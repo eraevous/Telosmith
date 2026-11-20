@@ -79,13 +79,16 @@ def find_root(start: str | Path = ".") -> Path | None:
     return None
 
 
-def _no_duplicates(pairs):
-    out = {}
-    for k, v in pairs:
-        if k in out:
-            raise ConfigError(f"repeated key {k!r}")
-        out[k] = v
-    return out
+def _collect_duplicates(found: list[str]):
+    """An object_pairs_hook that records repeated keys (keeping the last value) so validation still runs."""
+    def hook(pairs):
+        out = {}
+        for k, v in pairs:
+            if k in out:
+                found.append(f"repeated key {k!r}")
+            out[k] = v
+        return out
+    return hook
 
 
 def _check_path(key: str, value, problems: list[str]) -> None:
@@ -114,8 +117,8 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
     if "records" in doc:
         _check_path("records", doc["records"], problems)
         values["records"] = doc["records"]
-    init = doc.get("init")
-    if init is not None:
+    if "init" in doc:
+        init = doc["init"]
         if not isinstance(init, dict):
             problems.append("init: must be an object")
         else:
@@ -143,14 +146,14 @@ def load(start: str | Path = ".") -> Config:
     if not path.exists():
         return Config(root, None)
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicates)
-    except ConfigError as error:
-        raise ConfigError(f"{path}: {error}") from None
+        duplicates: list[str] = []
+        doc = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_collect_duplicates(duplicates))
     except json.JSONDecodeError as error:
         raise ConfigError(f"{path}: not valid JSON (line {error.lineno}, column {error.colno}: {error.msg})") from None
     except (OSError, UnicodeDecodeError) as error:
         raise ConfigError(f"{path}: can't read it ({error})") from None
     values, problems = validate(doc)
+    problems = duplicates + problems
     if problems:
         raise ConfigError(f"{path}: " + "; ".join(problems))
     return Config(root, path, values)
