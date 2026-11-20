@@ -71,14 +71,25 @@ def _nonempty_str(v) -> bool:
     return isinstance(v, str) and v.strip() != ""
 
 
-def _http_url(v) -> bool:
-    if not _nonempty_str(v):
-        return False
+def _has_host_and_valid_port(v: str, schemes=None) -> bool:
+    """A URL with a scheme (in `schemes`, when given), a hostname, and a valid port if one is written."""
     try:
         p = urlparse(v)
+        port = p.port  # raises ValueError for a port that isn't 0-65535 digits
     except ValueError:  # e.g. "https://[": a malformed URL is a problem to report, not a crash
         return False
-    return p.scheme in ("http", "https") and bool(p.netloc)
+    if schemes is not None and p.scheme not in schemes:
+        return False
+    return bool(p.hostname) and port != 0
+
+
+def _http_url(v) -> bool:
+    return _nonempty_str(v) and _has_host_and_valid_port(v, ("http", "https"))
+
+
+def _valid_port(port: str) -> bool:
+    # ASCII digits only ("²".isdigit() is true), and short enough that int() can't hit a length limit
+    return port.isascii() and port.isdigit() and len(port) <= 5 and 0 < int(port) < 65536
 
 
 def _grpc_address(v) -> bool:
@@ -86,13 +97,10 @@ def _grpc_address(v) -> bool:
     if not _nonempty_str(v):
         return False
     if "://" in v:
-        try:
-            return bool(urlparse(v).netloc)
-        except ValueError:
-            return False
+        return _has_host_and_valid_port(v)
     host, sep, port = v.rpartition(":")
     return (bool(sep) and host != "" and not any(c.isspace() or c == "/" for c in host)
-            and port.isdigit() and 0 < int(port) < 65536)
+            and _valid_port(port))
 
 
 def _interface_url_problem(f: dict, where: str) -> str | None:

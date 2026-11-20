@@ -122,6 +122,21 @@ class ValidateCard(unittest.TestCase):
         card["supportedInterfaces"][0].update(protocolBinding="CUSTOM", url="custom:anything")
         self.assertEqual(a2a.validate_card(card), [])
 
+    def test_hostless_urls_and_bad_ports_are_problems(self):  # Codex P2s on ef2308a
+        card = self.good()
+        for bad in ("https://:443", "https://example.test:notaport", "https://example.test:70000", "https://example.test:0"):
+            card["supportedInterfaces"][0]["url"] = bad
+            self.assertIn("supportedInterfaces[0].url must be an absolute http(s) URL", a2a.validate_card(card), bad)
+        card["supportedInterfaces"][0].update(protocolBinding="GRPC")
+        for bad in ("host:\u00b2", "host:" + "9" * 5000, "host:99999", "grpc://:443"):
+            card["supportedInterfaces"][0]["url"] = bad
+            self.assertIn("supportedInterfaces[0].url must be host:port (or a URL) for GRPC", a2a.validate_card(card), bad[:20])
+        with self.assertRaises(a2a.CardError):
+            a2a.build_card(**{**BASE, "url": "host:\u00b2"}, binding="GRPC")
+        card["supportedInterfaces"][0]["url"] = "https://example.test:8443/a2a"
+        card["supportedInterfaces"][0]["protocolBinding"] = "JSONRPC"
+        self.assertEqual(a2a.validate_card(card), [])
+
     def test_never_raises_on_odd_shapes(self):
         for odd in ({"skills": [1, None]}, {"supportedInterfaces": "x"}, {"capabilities": []}, {"provider": 3}):
             self.assertIsInstance(a2a.validate_card({**self.good(), **odd}), list)
