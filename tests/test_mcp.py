@@ -89,6 +89,20 @@ class TestProtocol(unittest.TestCase):
         self.assertTrue(r["isError"])
         self.assertIn("ZeroDivisionError", r["content"][0]["text"])
 
+    def test_non_string_tool_name_is_invalid_params(self):  # Codex P2 on 71323e6: {"name": []} raised TypeError
+        for bad in ([], {}, 1, None):
+            self.assertEqual(call(self.srv, "tools/call", {"name": bad})["error"]["code"], -32602)
+
+    def test_serve_survives_a_dispatch_bug(self):
+        def boom(msg):
+            raise RuntimeError("bug")
+        self.srv.handle = boom
+        lines = [json.dumps({"jsonrpc": "2.0", "id": 7, "method": "ping"})] * 2
+        out = io.StringIO()
+        self.srv.serve(io.StringIO("\n".join(lines) + "\n"), out)
+        replies = [json.loads(x) for x in out.getvalue().splitlines()]
+        self.assertEqual([(r["id"], r["error"]["code"]) for r in replies], [(7, -32603), (7, -32603)])
+
     def test_duplicate_tool_name_refused(self):
         with self.assertRaises(ValueError):
             self.srv.tool("echo", "again")(lambda a: None)

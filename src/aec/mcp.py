@@ -108,7 +108,7 @@ class McpServer:
 
     def _call(self, params: dict) -> dict:
         name, args = params.get("name"), params.get("arguments") or {}
-        if name not in self.tools:
+        if not isinstance(name, str) or name not in self.tools:  # an object or array name is unhashable (Codex P2, #95)
             raise RpcError(INVALID_PARAMS, f"unknown tool: {name!r}")
         if not isinstance(args, dict):
             raise RpcError(INVALID_PARAMS, "arguments must be an object")
@@ -134,7 +134,11 @@ class McpServer:
             except ValueError as e:
                 reply = _error(None, PARSE_ERROR, f"parse error: {e}")
             else:
-                reply = self.handle(msg)
+                try:
+                    reply = self.handle(msg)
+                except Exception as e:  # a bug in dispatch answers this request; it never ends the session
+                    rid = msg.get("id") if isinstance(msg, dict) else None
+                    reply = _error(rid, INTERNAL_ERROR, f"internal error: {type(e).__name__}")
             if reply is not None:
                 stdout.write(json.dumps(reply, separators=(",", ":")) + "\n")
                 stdout.flush()
