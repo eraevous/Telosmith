@@ -108,22 +108,56 @@ HOOK = {
 
 # One-line form (AEC-D-braided-dcc@1, propagation D; opt-in with `aec init --hook-style line`). The hook body
 # lives in the installed package (`aec hook project`, src/aec/userhook.py), so a fix to the body ships with a
-# Telosmith release and the settings text in each repository stays the same. What stays in the line is only what
-# must run before any aec is imported: the launcher above (which aec gets imported) and two diagnostics, one for
-# "no aec importable at all" and one for "an aec too old to have the body". Exit codes match HOOK_COMMAND:
+# Telosmith release and the settings text in each repository stays the same. Exit codes match HOOK_COMMAND:
 # 0 quiet, 1 a step could not run, 2 a report for the agent. Nothing blocks: PostToolUse runs after the edit.
-# Not yet the default. Kate's gates for replacing the inline hook (docs/integrations/braided-dcc.md) are not all
-# met: the line does not yet check that the local aec is the version CI pins.
+#
+# What stays in the line is what must run before any aec is imported: the pre-import gate below
+# (Kate's AEC-R-hook-launcher-preimport@1 and AEC-R-hook-line-pin-gate@1, under AEC-D-pin-check-scope@1). It is
+# settings text, not package code, so nothing the gate is checking runs before it. One `python3 -I -B` process:
+# -I ignores PYTHONPATH, the user site and the working directory, so no sitecustomize, .pth or shadow module from
+# an environment path runs at startup; -B writes no bytecode. In that process the gate
+#   1. reads the pin, `commit` in tools/aec_upstream.json: a regular file, not a symlink, a full 40-character SHA;
+#   2. appends the filtered PYTHONPATH entries (never the project) after the interpreter's own path, so they can
+#      add an aec but never shadow the standard library, and finds `aec` without importing it;
+#   3. requires that package to belong to an installed telosmith distribution whose PEP 610 direct_url.json is a
+#      non-editable git install of exactly the pinned commit, outside the project; a source checkout, an
+#      editable install or any other aec fails (AEC-R-pin-check-local-identity@2);
+#   4. only then loads that aec from the spec it checked (its submodules come from the same directory) and runs
+#      `aec hook project` in the same process, so the import path is not searched again between check and run.
+# Any failure prints one line naming what is missing and exits 1 before any aec code runs. Out of scope, as in
+# AEC-R-pin-check@8: tampering with the installed environment itself (the user-level hook verifies RECORD).
+HOOK_LINE_GATE = (
+    "import sys,os,json,re,runpy,importlib.util as u,importlib.metadata as m\n"
+    "P=os.path.realpath(sys.argv[1]);S=os.sep\n"
+    "def no(t):print('Telosmith hook: '+t,file=sys.stderr);sys.exit(1)\n"
+    "f=os.path.join(P,'tools','aec_upstream.json')\n"
+    "try:c=json.load(open(f)) if os.path.isfile(f) and not os.path.islink(f) else {};c=c.get('commit')\n"
+    "except Exception:c=None\n"
+    "if not(isinstance(c,str) and re.fullmatch('[0-9a-f]{40}',c)):no(f+' names no full commit; the line hook runs "
+    "only the aec your CI pins there')\n"
+    "sys.path+=[a for a in sys.argv[2].split(os.pathsep) if a]\n"
+    "s=u.find_spec('aec');o=s and s.origin\n"
+    "if not o:no('no aec is importable here; install Telosmith at the commit your CI job pins (pip install "
+    + AEC_SOURCE + "@'+c+')')\n"
+    "L=os.path.realpath(os.path.dirname(o))\n"
+    "d=[x for x in m.distributions(name='telosmith') if os.path.realpath(x.locate_file('aec'))==L]\n"
+    "try:v=json.loads(d[0].read_text('direct_url.json'))\n"
+    "except Exception:v={}\n"
+    "D=lambda x:x if isinstance(x,dict) else {}\n"
+    "v=D(v);g=D(v.get('vcs_info'));t=v.get('dir_info',{})\n"
+    "if (L+S).startswith(P+S) or not isinstance(t,dict) or t.get('editable') or g.get('vcs')!='git' or "
+    "g.get('commit_id')!=c:no('the aec at '+L+' is not a non-editable pip install from git of the pinned commit "
+    "'+c[:12]+' (tools/aec_upstream.json); install it with pip install " + AEC_SOURCE + "@'+c)\n"
+    "a=sys.modules['aec']=u.module_from_spec(s)\n"
+    "try:s.loader.exec_module(a);import aec.userhook as h;h.project_run\n"
+    "except Exception:no('the pinned aec has no hook project; pin Telosmith 0.6.0 or later, or go back to the "
+    "inline hook: aec init --hooks --hook-style inline')\n"
+    "sys.argv=['aec','hook','project',P];runpy.run_module('aec',run_name='__main__',alter_sys=True)"
+)
 HOOK_LINE_COMMAND = (
-    "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; "
-    + HOOK_AEC +
-    "aec --version >/dev/null 2>&1 || "
-    "{ echo 'Telosmith hook: no aec is importable here; install Telosmith at the commit your CI job pins "
-    "(pip install \"" + AEC_SOURCE + "@<commit>\")' >&2; exit 1; }; "
-    "aec hook project --help >/dev/null 2>&1 || "
-    "{ echo \"Telosmith hook: the installed $(aec --version 2>&1) has no 'hook project'; install Telosmith "
-    "0.6.0 or later (the commit your CI job pins), or go back to the inline hook: aec init --hooks --hook-style inline\" >&2; exit 1; }; "
-    "aec hook project \"$P\""
+    "P=\"$CLAUDE_PROJECT_DIR\"; cd \"$P\" || exit 0; "
+    "cd / && pp=$(python3 -I -c \"" + HOOK_PATHFILTER + "\" \"$P\") || exit 1; "
+    "python3 -I -B -c \"" + HOOK_LINE_GATE + "\" \"$P\" \"$pp\""
 )
 
 HOOK_LINE = {
@@ -398,6 +432,22 @@ hook-before.jsonl
 """
 
 
+PIN_FILE = Path("tools") / "aec_upstream.json"   # the one pin source (AEC-D-pin-check-scope@1; pin.UPSTREAM_FILE)
+
+
+def pin_json(commit: str) -> str:
+    """The pin file `aec init --hook-style line` writes: MtG's format, reduced to what the hook and pin-check read."""
+    return json.dumps({
+        "_doc": "The Telosmith commit this repository follows. `aec pin-check` compares the installed aec "
+                "against it. A one-line Claude Code hook enforces it only when its launcher carries the "
+                "pre-import pin gate (Telosmith#92, AEC-R-hook-line-pin-gate@1); without that gate the hook does "
+                "not read this file. Keep the CI job's install line on the same commit. Written by aec init; "
+                "edit it to move the pin.",
+        "repo": "https://github.com/eraevous/Telosmith",
+        "commit": commit,
+    }, indent=2) + "\n"
+
+
 STUB_PURPOSE = "TODO: the owner states what this project is for (stub from aec init)"
 
 
@@ -476,6 +526,22 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     if hooks:
         put("snippets/claude-settings.json", lambda: json.dumps(HOOK_STYLES[hook_style], indent=2) + "\n")
         put(f"snippets/{ci_name}-ci.yml", lambda: ci_snippet(ref, ci_name))
+    pin_state = None
+    if hooks and hook_style == "line":
+        # aec pin-check, and the line hook once its launcher has the pin gate (AEC-R-hook-line-pin-gate@1, #92),
+        # read tools/aec_upstream.json, so the repository needs that file: write it with the commit the CI snippet pins, never over an existing one,
+        # and never through a symlinked tools/ directory (AEC-R-init-writes-pin-file-impl@2).
+        pin_key = PIN_FILE.as_posix()
+        tools = root / PIN_FILE.parent
+        if os.path.islink(tools) or (os.path.lexists(tools) and not tools.is_dir()):
+            pin_state = "blocked"
+        elif os.path.lexists(root / PIN_FILE):  # a dangling symlink counts as present
+            pin_state = "kept"
+            kept.append(pin_key)
+        else:
+            E.write_replacing(root / PIN_FILE, pin_json(ref))
+            pin_state = "created"
+            created.append(pin_key)
 
     spec_kit = (root / ".specify").is_dir()
     steps = []
@@ -497,6 +563,19 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
                    f"(pip install \"{AEC_SOURCE}@{ref}\"); a newer Telosmith updates the hook body without "
                    "editing .claude/settings.json. To go back, run `aec init --hooks --hook-style inline` in an empty "
                    "directory and copy its .aec/snippets/claude-settings.json over.")]
+        if pin_state == "created":
+            steps.append(f"Commit {PIN_FILE.as_posix()}: it pins Telosmith commit {ref}, the commit aec pin-check "
+                         "compares against. The line hook enforces it only once its launcher has the pin gate "
+                         "(Telosmith#92); until then run aec pin-check yourself. Move it and the CI job's commit "
+                         "together.")
+        elif pin_state == "kept":
+            steps.append(f"{PIN_FILE.as_posix()} already existed and was kept, not rewritten: aec pin-check (and a "
+                         f"gated line hook, Telosmith#92) compare against it, so check that it names {ref} or "
+                         "install the commit it names.")
+        elif pin_state == "blocked":
+            steps.append(f"{PIN_FILE.as_posix()} was not written: {PIN_FILE.parent.as_posix()} is a symlink or not "
+                         "a directory. Until a regular file there names a full commit, aec pin-check fails (and so "
+                         "would a gated line hook, Telosmith#92).")
     else:
         steps.append("No hook or CI snippet written: " + ("this repository has no Python code, so code-impact has "
                      "nothing to report. Re-run `aec init --hooks` after adding code." if snapshot["header"]["files"] == 0
