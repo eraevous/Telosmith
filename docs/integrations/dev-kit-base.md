@@ -2,7 +2,9 @@
 
 Author: claude:aec#wake-20261119-23 · Reviewer: none yet (Kate asked for the item-1 records; Codex on open) · model=claude-opus-5-5
 
-Status: **proposed** (`AEC-D-repo-config@1`, `epistemic: provisional`). Nothing here is adopted until Zach accepts it.
+Status: **decided: `.aec/config.json`** (`AEC-D-repo-config@2`, accepted). Zach, on Telosmith#94, 2026-11-20T14:49Z:
+"Decided as aec/config.json". Read as `.aec/config.json`, the JSON option below (the leading dot is the `.aec/` folder
+every repository has). The rest of this page is the proposal as written; where it says TOML, the decision replaces it.
 Handoff: HO-AEC-20261119-V8FC (relay-kit-private), authorized by DEC-256 (Zach, 2026-11-19 15:21 and 15:33 CT).
 
 ## What this is for
@@ -15,7 +17,14 @@ Telosmith-based tools discover and call each other, passing in CI (item 6).
 Getting there has two parts. Part A removes what instantiating repositories copy by hand today (hook text, snippets,
 AGENTS.md governance prose), behind one per-repository config. Part B adds the sockets and the test that proves them.
 
-## The one call for Zach now: where the per-repository config lives
+## Decided: `.aec/config.json`
+
+What changes from the proposal below: the file is JSON, read with the standard-library `json` module on every
+supported Python (3.10 included), so there is no 3.10 error path and the Python floor question no longer bears on
+this work. JSON has no comments; the item-1 PR will propose a `_doc` key for prose (as in `tools/aec_upstream.json`).
+Unchanged: the file lives in `.aec/`, a missing file means today's defaults, unknown keys are errors.
+
+## The call as it was put to Zach: where the per-repository config lives
 
 **Recommendation: `.aec/config.toml`.** Not `[tool.telosmith]` in `pyproject.toml`.
 
@@ -55,7 +64,7 @@ The exact keys come with the item-1 PR and the semantic maintainer's records, no
 
 ## Order of work (one PR each, from main, no stacking)
 
-1. **Config** (`.aec/config.toml` loader, defaults, `aec config show`). Needs this decision. Kate's records first.
+1. **Config** (`.aec/config.json` loader, defaults, `aec config show`). Decided; Kate's records first.
 2. **`aec hook`** as a command: already built as `aec hook project` in Telosmith#92 (ready, waiting on Zach). Reading
    strictness from the config waits for #92's merge (no stacking).
 3. **`aec agents`**: renders the shared governance part of AGENTS.md between markers, with a glossary pointer (DEC-255);
