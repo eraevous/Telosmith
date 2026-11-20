@@ -279,6 +279,18 @@ class PreImportGate(Checkout):
                 site = install(self.outside / f"site-{name.replace(' ', '-')}", **kwargs)
                 self.refused(self.line(str(site)), "is not a non-editable pip install from git of the pinned commit")
 
+    def test_malformed_provenance_shapes_get_the_one_line_diagnostic(self):
+        # Copilot on #92: valid JSON of the wrong shape must not end in a traceback.
+        shapes = {"null": None, "list": [], "string": "x", "vcs_info list": {"vcs_info": []},
+                  "dir_info list": {"dir_info": [], "vcs_info": {"vcs": "git", "commit_id": PIN}},
+                  "vcs_info string": {"vcs_info": "git"}, "invalid json": "{nope"}
+        for name, data in shapes.items():
+            with self.subTest(name):
+                site = install(self.outside / f"shape-{name.replace(' ', '-')}")
+                text = data if name == "invalid json" else json.dumps(data)
+                (site / "telosmith-0.5.0.dist-info" / "direct_url.json").write_text(text)
+                self.refused(self.line(str(site)), "is not a non-editable pip install from git of the pinned commit")
+
     def test_source_checkout_is_refused_before_its_code_runs(self):
         # Kate's case: an ignored shadow package in a writable checkout (src/aec/records/__init__.py) must not run.
         checkout = self.outside / "checkout" / "src"
