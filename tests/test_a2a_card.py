@@ -99,6 +99,17 @@ class ValidateCard(unittest.TestCase):
         self.assertIn("'capabilities.streaming' must be true or false", problems)
         self.assertIn("provider is missing 'url'", problems)
 
+    def test_malformed_url_is_a_problem_not_a_crash(self):  # Codex P2 on e14e93c
+        card = self.good()
+        card["supportedInterfaces"][0]["url"] = "https://["
+        card["provider"] = {"organization": "Org", "url": "http://[::1"}
+        problems = a2a.validate_card(card)
+        self.assertIn("supportedInterfaces[0].url must be an absolute http(s) URL", problems)
+        self.assertIn("provider.url must be an absolute http(s) URL", problems)
+        code, out, err = run(["a2a", "card", "--name", "d", "--description", "D", "--version", "1", "--url", "https://["])
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("http(s) URL", err)
+
     def test_never_raises_on_odd_shapes(self):
         for odd in ({"skills": [1, None]}, {"supportedInterfaces": "x"}, {"capabilities": []}, {"provider": 3}):
             self.assertIsInstance(a2a.validate_card({**self.good(), **odd}), list)

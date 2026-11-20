@@ -74,7 +74,10 @@ def _nonempty_str(v) -> bool:
 def _http_url(v) -> bool:
     if not _nonempty_str(v):
         return False
-    p = urlparse(v)
+    try:
+        p = urlparse(v)
+    except ValueError:  # e.g. "https://[": a malformed URL is a problem to report, not a crash
+        return False
     return p.scheme in ("http", "https") and bool(p.netloc)
 
 
