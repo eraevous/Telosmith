@@ -24,7 +24,7 @@ without it behaves exactly as before: every setting has a default equal to today
 | `_doc` | string | none | nobody (JSON has no comments) |
 | `version` | `1` | `1` | the loader: any other value is an error |
 | `records` | relative path | `.aec/records.jsonl` | `aec config show` now; the record commands in a later slice |
-| `init.ci_name` | name (`A-Z a-z 0-9 . _ -`) | `aec` | `aec init --ci-name` |
+| `init.ci_name` | name (`A-Z a-z 0-9 _ -`, as `aec init` accepts) | `aec` | `aec init --ci-name` |
 | `init.hook_style` | `inline` or `line` | `inline` | `aec init --hook-style` |
 
 ## Rules

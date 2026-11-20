@@ -29,6 +29,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from .init import CI_NAME, HOOK_STYLES
+
 CONFIG_PATH = ".aec/config.json"
 SCHEMA_VERSION = 1
 
@@ -39,7 +41,6 @@ DEFAULTS: dict[str, object] = {
 }
 _SECTIONS = {"init"}
 _TOP = {"_doc", "version", "records"} | _SECTIONS
-_CI_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 class ConfigError(ValueError):
@@ -122,12 +123,12 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
                 problems.append(f"unknown key 'init.{key}' (known: init.ci_name, init.hook_style)")
             if "ci_name" in init:
                 v = init["ci_name"]
-                if not isinstance(v, str) or not _CI_NAME.match(v):
-                    problems.append(f"init.ci_name: letters, digits, '.', '_' or '-', got {v!r}")
+                if not isinstance(v, str) or not CI_NAME.fullmatch(v):
+                    problems.append(f"init.ci_name: letters, digits, '_' or '-' (what aec init accepts), got {v!r}")
                 values["init.ci_name"] = v
             if "hook_style" in init:
                 v = init["hook_style"]
-                if v not in ("inline", "line"):
+                if v not in HOOK_STYLES:
                     problems.append(f"init.hook_style: 'inline' or 'line', got {v!r}")
                 values["init.hook_style"] = v
     return (values if not problems else {}), problems

@@ -105,6 +105,7 @@ class Validation(unittest.TestCase):
         self.bad({"init": []}, "init: must be an object")
         self.bad({"init": {"hook_style": "both"}}, "init.hook_style")
         self.bad({"init": {"ci_name": "a b"}}, "init.ci_name")
+        self.bad({"init": {"ci_name": "aec.check"}}, "init.ci_name")  # init itself refuses a dot (Codex, #97)
         self.bad({"_doc": 3}, "_doc")
 
     def test_paths_stay_relative_and_inside(self):
@@ -145,6 +146,15 @@ class Precedence(unittest.TestCase):
             self.assertTrue(settings.exists())
             self.assertIn("hook project", settings.read_text())  # init.hook_style "line" from the file
             self.assertEqual((r.root / config.CONFIG_PATH).read_bytes(), before)  # never rewritten
+
+    def test_every_value_the_config_accepts_init_accepts(self):
+        for name in ("aec", "a-b_c", "X9"):
+            for style in ("inline", "line"):
+                with self.subTest(name=name, style=style), Repo() as r:
+                    r.write({"init": {"ci_name": name, "hook_style": style}})
+                    (r.root / "m.py").write_text("x = 1\n")
+                    code, _, err = run(["init", str(r.root), "--owner", "o"])
+                    self.assertEqual(code, 0, err)
 
     def test_init_without_config_is_unchanged(self):
         with Repo() as r:
