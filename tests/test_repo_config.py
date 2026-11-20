@@ -104,6 +104,8 @@ class Validation(unittest.TestCase):
         self.bad({"version": True}, "version")
         self.bad({"init": []}, "init: must be an object")
         self.bad({"init": {"hook_style": "both"}}, "init.hook_style")
+        self.bad({"init": {"hook_style": []}}, "init.hook_style")   # unhashable: no TypeError (Codex, #97)
+        self.bad({"init": {"hook_style": {}}, "x": 1}, "init.hook_style", "'x'")
         self.bad({"init": {"ci_name": "a b"}}, "init.ci_name")
         self.bad({"init": {"ci_name": "aec.check"}}, "init.ci_name")  # init itself refuses a dot (Codex, #97)
         self.bad({"_doc": 3}, "_doc")

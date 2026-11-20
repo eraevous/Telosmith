@@ -128,7 +128,7 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
                 values["init.ci_name"] = v
             if "hook_style" in init:
                 v = init["hook_style"]
-                if v not in HOOK_STYLES:
+                if not isinstance(v, str) or v not in HOOK_STYLES:
                     problems.append(f"init.hook_style: 'inline' or 'line', got {v!r}")
                 values["init.hook_style"] = v
     return (values if not problems else {}), problems
