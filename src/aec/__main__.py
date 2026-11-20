@@ -17,6 +17,8 @@
   aec hook project PROJECT  the hook body the one-line project hook calls (init --hook-style line)
   aec pin-check [ROOT]  exit 0 only when the installed aec equals the commit in tools/aec_upstream.json (else 1, with why)
   aec mcp [--root ROOT] [--records PATH]  serve the records over MCP (stdio, read-only)
+  aec a2a card --name N --description D --version V --url URL [--skill ID=NAME|DESC|TAGS] [-o FILE]  A2A 1.0 Agent Card
+  aec a2a check FILE  exit 0 only when FILE has every field A2A 1.0 requires
   python -m aec speckit drift PATH... [--all] [--json]         spec/record drift, both directions (writes nothing)
 """
 from __future__ import annotations
@@ -27,7 +29,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, mcp, pin, speckit, userhook
+from . import __version__, a2a, mcp, pin, speckit, userhook
 from . import edges as E
 from .impact import impact, render
 from .records import Store, check
@@ -145,6 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     userhook.add_parser(sub)
     pin.add_parser(sub)
     mcp.add_parser(sub)
+    a2a.add_parser(sub)
     snap_parser = sub.add_parser("snapshot", help="snapshot a working tree or local git revision")
     snap_parser.add_argument("root", nargs="?", default=".")
     snap_parser.add_argument("--rev")
@@ -403,7 +406,7 @@ HANDLERS = {
     "edges": _cmd_edges, "check": _cmd_check, "impact": _cmd_impact, "code-impact": _cmd_code_impact,
     "init": _cmd_init, "anchor": _cmd_anchor, "append": _cmd_append, "import-purpose": _cmd_import_purpose, "source": _cmd_source,
     "snapshot": _cmd_snapshot, "diff": _cmd_diff, "reach": _cmd_query, "fan": _cmd_query, "unresolved": _cmd_query,
-    "speckit": speckit.run, "hook": userhook.cli, "pin-check": pin.cli, "mcp": mcp.cli,
+    "speckit": speckit.run, "hook": userhook.cli, "pin-check": pin.cli, "mcp": mcp.cli, "a2a": a2a.cli,
 }
 
 
