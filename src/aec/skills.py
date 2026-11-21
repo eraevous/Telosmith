@@ -70,6 +70,10 @@ def _scalar(raw: str, where: str, problems: list) -> str | None:
         problems.append(f"{where}: {raw[:1]!r} starts YAML outside the subset this checker reads "
                         "(use a plain or quoted one-line value)")
         return None
+    if raw[:1] in (",", "%", "#", "]", "}") or re.match(r"[-?:](\s|$)", raw):
+        # YAML can't start a plain scalar with these (`- x` is a list, `? x` a complex key, `#` a comment)
+        problems.append(f"{where}: a plain value may not start with {raw[:2].strip()!r} (quote it)")
+        return None
     value = re.split(r"\s+#", raw, maxsplit=1)[0].rstrip()
     if ": " in value:
         problems.append(f"{where}: a plain value may not contain ': ' (quote it)")

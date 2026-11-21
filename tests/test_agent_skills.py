@@ -76,6 +76,16 @@ class Parse(unittest.TestCase):
         fm, _, problems = skills.parse_skill_md("---\nname: a\ndescription: d\nmetadata:\n  enabled: true\n---\n")
         self.assertTrue(problems)
 
+    def test_plain_values_starting_with_a_yaml_indicator_are_reported(self):
+        # Codex P2 on 24e38c5: `- demo` and `? demo` were accepted; YAML reads a list or a complex key
+        for raw in ("- demo", "? demo", ": demo", "-", "?", ", x", "% x", "} x"):
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
+            self.assertTrue(problems, raw)
+            self.assertNotIn("description", fm, raw)
+        for raw in ("-demo", "?why", ":colon", "a - b"):  # decoys: ordinary plain strings
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
+            self.assertEqual((problems, fm.get("description")), ([], raw), raw)
+
     def test_quoted_or_text_lookalikes_stay_strings(self):
         # decoys: quoted forms, and plain text that only starts like a number or keyword
         for raw, want in (('"123"', "123"), ("'true'", "true"), ("v1.2", "v1.2"), ("nothing", "nothing"),
