@@ -117,8 +117,11 @@ HOOK = {
 # -I ignores PYTHONPATH, the user site and the working directory, so no sitecustomize, .pth or shadow module from
 # an environment path runs at startup; -B writes no bytecode. In that process the gate
 #   1. reads the pin, `commit` in tools/aec_upstream.json: a regular file, not a symlink, a full 40-character SHA;
-#   2. appends the filtered PYTHONPATH entries (never the project) after the interpreter's own path, so they can
-#      add an aec but never shadow the standard library, and finds `aec` without importing it;
+#   2. puts the user site (`pip install --user`) where a normal start would, ahead of the system site-packages,
+#      unless PYTHONNOUSERSITE is set or this is a virtual environment (where pip refuses --user anyway); it is
+#      added as a plain path, so its .pth files and usercustomize never run. Then appends the filtered PYTHONPATH
+#      entries (never the project) after the interpreter's own path, so they can add an aec but never shadow the
+#      standard library, and finds `aec` without importing it (Codex P2 on MtG#59);
 #   3. requires that package to belong to an installed telosmith distribution whose PEP 610 direct_url.json is a
 #      non-editable git install of exactly the pinned commit, outside the project; a source checkout, an
 #      editable install or any other aec fails (AEC-R-pin-check-local-identity@2);
@@ -127,7 +130,7 @@ HOOK = {
 # Any failure prints one line naming what is missing and exits 1 before any aec code runs. Out of scope, as in
 # AEC-R-pin-check@8: tampering with the installed environment itself (the user-level hook verifies RECORD).
 HOOK_LINE_GATE = (
-    "import sys,os,json,re,runpy,importlib.util as u,importlib.metadata as m\n"
+    "import sys,os,json,re,runpy,site,importlib.util as u,importlib.metadata as m\n"
     "P=os.path.realpath(sys.argv[1]);S=os.sep\n"
     "def no(t):print('Telosmith hook: '+t,file=sys.stderr);sys.exit(1)\n"
     "f=os.path.join(P,'tools','aec_upstream.json')\n"
@@ -135,6 +138,10 @@ HOOK_LINE_GATE = (
     "except Exception:c=None\n"
     "if not(isinstance(c,str) and re.fullmatch('[0-9a-f]{40}',c)):no(f+' names no full commit; the line hook runs "
     "only the aec your CI pins there')\n"
+    "U=site.getusersitepackages()\n"
+    "if not os.environ.get('PYTHONNOUSERSITE') and sys.prefix==sys.base_prefix and os.path.isdir(U):"
+    "G=set(site.getsitepackages());sys.path.insert(next((i for i,x in enumerate(sys.path) if x in G),"
+    "len(sys.path)),U)\n"
     "sys.path+=[a for a in sys.argv[2].split(os.pathsep) if a]\n"
     "s=u.find_spec('aec');o=s and s.origin\n"
     "if not o:no('no aec is importable here; install Telosmith at the commit your CI job pins (pip install "
@@ -147,7 +154,8 @@ HOOK_LINE_GATE = (
     "v=D(v);g=D(v.get('vcs_info'));t=v.get('dir_info',{})\n"
     "if (L+S).startswith(P+S) or not isinstance(t,dict) or t.get('editable') or g.get('vcs')!='git' or "
     "g.get('commit_id')!=c:no('the aec at '+L+' is not a non-editable pip install from git of the pinned commit "
-    "'+c[:12]+' (tools/aec_upstream.json); install it with pip install " + AEC_SOURCE + "@'+c)\n"
+    "'+c[:12]+' (tools/aec_upstream.json; installed: '+str(g.get('commit_id') or 'no git commit')[:12]+'); "
+    "install it with pip install " + AEC_SOURCE + "@'+c)\n"
     "a=sys.modules['aec']=u.module_from_spec(s)\n"
     "try:s.loader.exec_module(a);import aec.userhook as h;h.project_run\n"
     "except Exception:no('the pinned aec has no hook project; pin Telosmith 0.6.0 or later, or go back to the "
