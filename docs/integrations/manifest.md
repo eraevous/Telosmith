@@ -2,7 +2,7 @@
 
 Author: claude:aec#wake-20261121-21 · Reviewer: none yet (Codex on open; Kate asked for the records) · model=claude-opus-5-5
 
-Status: **proposed, not accepted** (`AEC-D-manifest-schema@1`). DEC-256 item 7, handoff HO-AEC-20261119-V8FC. DEC-177
+Status: **proposed, not accepted** (`AEC-D-manifest-schema@2`; Kate's round-9 records `AEC-R-manifest-*`, `independent`). DEC-256 item 7, handoff HO-AEC-20261119-V8FC. DEC-177
 says every new tool ships a manifest declaring its sockets and leaves the schema to R&D; DEC-256 asks for a proposal
 "as Agent Card plus MCP listings". Zach accepts or changes it. No code ships with this page.
 
@@ -16,16 +16,16 @@ no standard carries yet: the authority declaration (DEC-185) and the sockets tha
 
 ## The proposal
 
-One JSON file per tool, `telosmith.manifest/1`. Worked example: [`examples/manifest/telosmith.manifest.json`](../../examples/manifest/telosmith.manifest.json)
+One JSON file per tool, `telosmith.manifest/1.0`. Worked example: [`examples/manifest/telosmith.manifest.json`](../../examples/manifest/telosmith.manifest.json)
 (Telosmith itself; its `mcp` section is the real `tools/list` output of `aec mcp`).
 
 ```json
 {
-  "manifest": "telosmith.manifest/1",
+  "manifest": "telosmith.manifest/1.0",
   "tool":    {"id": "...", "name": "...", "version": "...", "description": "..."},
   "sockets": {
     "mcp":       {"transport": "stdio", "command": ["..."], "protocolVersions": ["..."], "serverInfo": {}, "capabilities": {},
-                  "tools": [], "resources": [], "resourceTemplates": [], "prompts": []},
+                  "tools": [], "resources": [], "resourceTemplates": [], "prompts": [], "listPolicy": {}},
     "a2a":       {"agentCard": {}},
     "skills":    [{"path": "...", "name": "...", "description": "..."}],
     "authority": {"needs": [], "accepts": [], "grants": [], "protocol": "undecided (DEC-185)"},
@@ -41,26 +41,37 @@ One JSON file per tool, `telosmith.manifest/1`. Worked example: [`examples/manif
    `tools/list` result, field for field; `a2a.agentCard` is an A2A 1.0 Agent Card as `aec a2a card` writes it;
    `skills` points at `SKILL.md` folders that pass `aec skills check`. Telosmith owns only the envelope, so nothing
    translates one standard into another and nothing can be lost in that translation.
-2. **Every socket key is present.** A tool that has no A2A endpoint writes `"a2a": null`; no skills is `[]`. An
-   absent key is an error, so "we don't speak A2A" is a statement in the file, not something a reader infers from a gap.
+2. **Every socket key is present, with one empty form each:** `mcp` and `a2a` are `null` when the tool doesn't speak
+   them; `skills` and `other` are `[]`; `authority` is always an object (empty lists inside). An absent key is an
+   error, so "we don't speak A2A" is a statement in the file, not something a reader infers from a gap.
 3. **Generated, then checked, not hand-written** (after acceptance, a follow-up PR): `aec manifest build` starts the
    tool's MCP server and copies its listings, builds the card, reads the skill folders and takes `tool`, `authority`
-   and `runtime` from `.aec/config.json`. `aec manifest check` rebuilds and reports any difference, in CI. This is
+   and `runtime` from `.aec/config.json`. `aec manifest check` rebuilds and reports any difference, field by field,
+   in CI. Key order inside objects doesn't count; array order does (MCP 2026-07-28 asks servers for a deterministic
+   tool order). The build follows `nextCursor` to the end of every list; a failed or incomplete collection is an
+   error, never a clean result. This is
    the lesson from October in this repository's AGENTS.md: a copy that something downstream maintains by hand drifts
    from the thing that owns the truth. Only `other` and `runtime` are hand-declared.
 4. **One authority declaration.** `sockets.authority` uses the fields of the authority extension already in
-   Telosmith#100 (`needs`, `accepts`, `grants`, `protocol`). When `a2a` is present, the card's authority extension
-   `params` must equal it. `protocol` stays `undecided (DEC-185)` and the declaration grants nothing, as in
+   Telosmith#100 (`needs`, `accepts`, `grants`, `protocol`). When `a2a` is present, the card must carry the
+   extension whose `uri` is `aec.a2a.AUTHORITY_EXTENSION_URI`, and its `params` must equal this object as JSON
+   (no grant is written `"grants": []`). `protocol` stays `undecided (DEC-185)` and the declaration grants nothing, as in
    `docs/integrations/authority-socket.md`.
 5. **Names agree.** `tool.version` equals `mcp.serverInfo.version` and, when present, the card's `version`.
 6. **`other` is transitional.** Folder, file and CLI sockets that aren't MCP or A2A yet (Prospero's content folder,
    say) are listed with `kind`, `direction`, `location` and `planned` (the standard socket they will become). A
    checker reports them as transitional, never as errors. They are free text: nothing can call them.
-7. **No secrets, no environment.** `mcp.command` is an argv list with no environment values; the manifest never
-   carries tokens, URLs with credentials or host paths.
-8. **Versioning.** `manifest` names a major version. A checker refuses a major it doesn't know. Within `/1` unknown
-   keys are errors, as in `.aec/config.json`, so adding a key ships a checker that knows it first. Removing or renaming
-   a key, or changing what one means, is `/2`. This is also the contract-version policy Kate asked for before item 6
+7. **No secrets, no environment; the manifest never runs anything.** `mcp.command` is an argv list with no
+   environment values, and the manifest never carries tokens, URLs with credentials or host paths. Validating a
+   manifest never launches its `command`: build and check launch the command named in the repository's own
+   `.aec/config.json`, so a manifest under review can't make the checker run something. A schema check can't prove a
+   server's output holds no secret; the build refuses environment-shaped values it can recognise, and that is all.
+8. **Versioning.** `manifest` is `telosmith.manifest/<major>.<minor>`, starting at `1.0`. The unknown-key rule
+   covers the objects Telosmith owns (the envelope, `tool`, `skills` entries, `authority`, `other`, `runtime`) and is
+   strict there, as in `.aec/config.json`; embedded MCP and A2A objects follow their own pinned schemas and may carry
+   fields Telosmith doesn't know. Adding a Telosmith-owned key is a new minor: a checker reads every minor up to its
+   own and refuses a newer one with a message naming both versions. Removing or renaming a key, or changing what one
+   means, is a new major. This is also the contract-version policy Kate asked for before item 6
    (round 2): the built-in MCP tool names and shapes in `mcp.tools` become part of what a `/1` manifest promises.
 
 ## Where it lives
@@ -108,8 +119,10 @@ DEC-177 names MCP spec 2026-07-28. `aec mcp` (Telosmith#95, merged) negotiates 2
 a server MUST implement `server/discover`; list results carry `ttlMs` and `cacheScope`; results carry `resultType`;
 `ping` is removed; Roots, Sampling and Logging are deprecated. Effects:
 - On this proposal: `mcp.protocolVersions` and `mcp.capabilities` are where a 2026-07-28 server's `server/discover`
-  answer goes; `mcp.tools` stays the `tools` array (the Tool object's fields weren't listed as changed). The build
-  step must drop per-response cache fields so the file doesn't change on every run. Not verified against the schema.
+  answer goes; `mcp.tools` stays the `tools` array (the Tool object's fields weren't listed as changed). A list
+  result's `ttlMs` and `cacheScope` are the server's declared policy, not noise: they are kept per list in
+  `mcp.listPolicy` (`{"tools": {"ttlMs": ..., "cacheScope": ...}}`) and a change is drift (Kate, round 9). Not
+  verified against the 2026-07-28 schema.
 - Separately: `aec mcp` needs 2026-07-28 support before item 6 can claim compatibility with current clients. That's
   a follow-up within item 5, not this decision.
 
