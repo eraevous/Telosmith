@@ -5,6 +5,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Added (AEC-R-agents-md-impl@1, DEC-256 item 4)
+- `aec agents show|write|check`: renders the governance part every Telosmith-based repository's AGENTS.md shares
+  (read-first order, authority, records and ledgers, hard rules, run and drift, a glossary pointer) from the new
+  `agents.*` keys of `.aec/config.json`, between two marker lines. `write` replaces only what lies between the markers
+  and refuses a file without them unless `--append`; `check` exits 1 when the block is missing or stale. Symlinked
+  targets are refused. See `docs/integrations/agents-md.md`.
+
 ### Changed (AEC-R-repo-config-impl@2, DEC-256 item 1, second slice)
 - `records` in `.aec/config.json` is now read by the commands whose records path is optional: `aec source show|search`,
   `aec import-purpose` and `aec mcp` (ROOT's own file), and `aec speckit derive|drift` (the file found by discovery).
