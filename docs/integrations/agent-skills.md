@@ -34,7 +34,9 @@ Against the Agent Skills specification as read on 2026-11-21 (https://agentskill
 Any other front-matter key is reported. Every problem is reported at once, one line each.
 
 **YAML subset.** Telosmith has no runtime dependencies, so the checker reads the subset `new` writes and most skills
-use: one-line `key: value` pairs (plain, single- or double-quoted) and `metadata:` followed by indented pairs. Block
+use: one-line `key: value` pairs (plain, single- or double-quoted) and `metadata:` followed by indented pairs (keys
+plain or quoted; `new` quotes every key and value). A plain value that YAML reads as null, a boolean, a number or a
+date (`null`, `true`, `yes`, `123`, `2026-11-21`) is reported: quote it when text is meant. Block
 scalars (`>`, `|`), lists, flow mappings, anchors and tags are reported as outside the subset, never guessed at. A
 skill that uses them may still be valid upstream; the upstream validator is `skills-ref validate`.
 

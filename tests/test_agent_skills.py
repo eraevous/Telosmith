@@ -57,6 +57,29 @@ class Parse(unittest.TestCase):
         self.assertIn("': '", skills.parse_skill_md("---\nname: a\ndescription: x: y\n---\n")[2][0])
 
 
+    def test_plain_values_yaml_reads_as_non_strings_are_reported(self):
+        # Codex P2 on b9772d8: these were read as strings and passed the string checks.
+        for raw in ("null", "~", "123", "-1.5e3", "0x1F", "true", "False", "yes", "off", ".inf", "2026-11-21"):
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
+            self.assertTrue(problems, raw)
+            self.assertNotIn("description", fm, raw)
+        fm, _, problems = skills.parse_skill_md("---\nname: a\ndescription: d\nmetadata:\n  enabled: true\n---\n")
+        self.assertTrue(problems)
+
+    def test_quoted_or_text_lookalikes_stay_strings(self):
+        # decoys: quoted forms, and plain text that only starts like a number or keyword
+        for raw, want in (('"123"', "123"), ("'true'", "true"), ("v1.2", "v1.2"), ("nothing", "nothing"),
+                          ("1st step", "1st step"), ("2026 plan", "2026 plan")):
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
+            self.assertEqual((problems, fm.get("description")), ([], want), raw)
+
+    def test_quoted_metadata_keys(self):
+        fm, _, problems = skills.parse_skill_md(
+            "---\nname: a\ndescription: d\nmetadata:\n  \"x: y\": \"z\"\n  'release version': \"1\"\n---\n")
+        self.assertEqual(problems, [])
+        self.assertEqual(fm["metadata"], {"x: y": "z", "release version": "1"})
+
+
 class Validate(unittest.TestCase):
     def test_name_rules_from_the_specification(self):
         for bad in ("PDF-Processing", "-pdf", "pdf-", "pdf--processing", "a_b", "", "a" * 65):
@@ -94,6 +117,13 @@ class Render(unittest.TestCase):
         self.assertEqual(fm["description"], 'Quotes " and \\ and: colons # too')
         self.assertEqual(fm["metadata"], {"a": "b: c"})
         self.assertEqual(body, "# demo")
+
+    def test_any_string_metadata_key_round_trips(self):
+        # Codex P2 on b9772d8: keys were written unquoted, so 'x: y' made invalid YAML.
+        md = {"x: y": "z", "release version": "1", "#hash": "h", "plain": "true"}
+        fm, _, problems = skills.parse_skill_md(skills.render_skill(name="a", description="d", metadata=md))
+        self.assertEqual(problems, [])
+        self.assertEqual(fm["metadata"], md)
 
     def test_invalid_values_raise_skill_error(self):
         with self.assertRaises(skills.SkillError):

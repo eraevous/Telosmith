@@ -12,7 +12,8 @@ ships its know-how the same way.
 
 Target: the Agent Skills specification as read on 2026-11-21 (https://agentskills.io/specification).
 The checker reads a YAML subset, the one `new` writes and most skills use: `key: value` lines with plain,
-single- or double-quoted scalars, and `metadata:` followed by indented `key: value` lines. Anything else
+single- or double-quoted scalars, and `metadata:` followed by indented `key: value` lines (keys plain or
+quoted). A plain value YAML would read as null, a boolean, a number or a date is reported: quote it. Anything else
 (block scalars, lists, flow mappings, anchors) is reported as outside the subset, not guessed at.
 Not covered: running a skill, checking its scripts, or `allowed-tools` semantics (experimental upstream).
 """
@@ -30,6 +31,13 @@ REQUIRED = ("name", "description")
 NAME_MAX, DESCRIPTION_MAX, COMPATIBILITY_MAX = 64, 1024, 500
 _NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 _KEY_LINE = re.compile(r"([A-Za-z0-9_-]+):(?:[ \t]+(.*))?$")
+# Plain scalars a YAML loader (1.1 or 1.2 core schema) reads as something other than a string.
+_NOT_A_STRING = re.compile(
+    r"~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|y|Y|n|N"
+    r"|[-+]?(0|[1-9][0-9_]*|0[0-7_]+|0o[0-7_]+|0x[0-9a-fA-F_]+|0b[01_]+)"
+    r"|[-+]?(\.[0-9]+|[0-9][0-9_]*(\.[0-9_]*)?)([eE][-+]?[0-9]+)?"
+    r"|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN)"
+    r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}([Tt ].*)?")
 
 
 class SkillError(ValueError):
@@ -65,7 +73,27 @@ def _scalar(raw: str, where: str, problems: list) -> str | None:
     if ": " in value:
         problems.append(f"{where}: a plain value may not contain ': ' (quote it)")
         return None
+    if _NOT_A_STRING.fullmatch(value):
+        problems.append(f"{where}: {value!r} is a YAML null, boolean, number or date, not a string "
+                        "(quote it if text is meant)")
+        return None
     return value
+
+
+def _mapping_line(text: str, where: str, problems: list):
+    """(key, raw value) for an indented `key: value` line; the key may be plain or quoted. None on a problem."""
+    if text[:1] in ('"', "'"):
+        m = re.match(r"(\"(?:[^\"\\]|\\.)*\"|'(?:[^']|'')*')[ \t]*:(?:[ \t]+(.*))?$", text)
+        if not m or m.group(2) is None:
+            problems.append(f"{where}: expected 'key: value' inside the mapping")
+            return None
+        key = _scalar(m.group(1), where, problems)
+        return None if key is None else (key, m.group(2))
+    m = _KEY_LINE.match(text)
+    if not m or m.group(2) is None:
+        problems.append(f"{where}: expected 'key: value' inside the mapping")
+        return None
+    return m.group(1), m.group(2)
 
 
 def parse_skill_md(text: str) -> tuple[dict, str, list[str]]:
@@ -88,15 +116,14 @@ def parse_skill_md(text: str) -> tuple[dict, str, list[str]]:
             if current_map is None:
                 problems.append(f"{where}: indented line outside a mapping")
                 continue
-            m = _KEY_LINE.match(line.strip())
-            if not m or m.group(2) is None:
-                problems.append(f"{where}: expected 'key: value' inside the mapping")
+            parsed = _mapping_line(line.strip(), where, problems)
+            if parsed is None:
                 continue
-            key = m.group(1)
+            key, raw_value = parsed
             if key in current_map:
                 problems.append(f"{where}: repeated key {key!r}")
                 continue
-            value = _scalar(m.group(2), where, problems)
+            value = _scalar(raw_value, where, problems)
             if value is not None:
                 current_map[key] = value
             continue
@@ -204,7 +231,7 @@ def render_skill(*, name: str, description: str, body: str = "", license: str | 
     for k, v in fm.items():
         if k == "metadata":
             out.append("metadata:")
-            out += [f"  {mk}: {_quoted(mv)}" for mk, mv in v.items()]
+            out += [f"  {_quoted(mk)}: {_quoted(mv)}" for mk, mv in v.items()]
         else:
             out.append(f"{k}: {_quoted(v)}")
     out.append("---")
