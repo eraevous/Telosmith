@@ -38,7 +38,8 @@ _NOT_A_STRING = re.compile(
     r"|[-+]?(0|[1-9][0-9_]*|0[0-7_]+|0o[0-7_]+|0x[0-9a-fA-F_]+|0b[01_]+)"
     r"|[-+]?(\.[0-9]+|[0-9][0-9_]*(\.[0-9_]*)?)([eE][-+]?[0-9]+)?"
     r"|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN)"
-    r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}([Tt ].*)?")
+    r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}([Tt ].*)?"
+    r"|[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+(\.[0-9_]*)?")  # YAML 1.1 base-60 numbers, e.g. 12:30
 
 
 class SkillError(ValueError):
@@ -75,8 +76,9 @@ def _scalar(raw: str, where: str, problems: list) -> str | None:
         problems.append(f"{where}: a plain value may not start with {raw[:2].strip()!r} (quote it)")
         return None
     value = re.split(r"\s+#", raw, maxsplit=1)[0].rstrip()
-    if ": " in value:
-        problems.append(f"{where}: a plain value may not contain ': ' (quote it)")
+    if re.search(r":(\s|$)", value):  # YAML reads a colon before a space, tab or the end as a mapping
+        problems.append(f"{where}: a plain value may not contain a colon followed by a space, tab or its end "
+                        "(quote it)")
         return None
     if _NOT_A_STRING.fullmatch(value):
         problems.append(f"{where}: {value!r} is a YAML null, boolean, number or date, not a string "

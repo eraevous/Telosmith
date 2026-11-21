@@ -63,9 +63,18 @@ class Parse(unittest.TestCase):
             self.assertIn("unsupported YAML", problems[0], raw)  # AEC-R-agent-skills@1 (Kate): say unsupported
             self.assertNotIn("description", fm, raw)
 
+    def test_colon_before_a_tab_or_at_the_end_of_a_plain_value(self):
+        # Codex P2 on a4e7834: `Demo:` and `Demo:\tx` passed; YAML reads a mapping value
+        for raw in ("Demo:", "Demo: # comment", "Demo:\tx", "a:b: ", "12:30"):  # 12:30 is a YAML 1.1 number
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
+            self.assertTrue(problems, raw)
+        for raw in ("a:b", "http://x.test/y", "12:30pm"):  # decoys: colons not followed by space/tab/end
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
+            self.assertEqual((problems, fm.get("description")), ([], raw), raw)
+
     def test_repeated_key_and_plain_value_with_colon(self):
         self.assertIn("repeated key", skills.parse_skill_md("---\nname: a\nname: b\n---\n")[2][0])
-        self.assertIn("': '", skills.parse_skill_md("---\nname: a\ndescription: x: y\n---\n")[2][0])
+        self.assertIn("colon", skills.parse_skill_md("---\nname: a\ndescription: x: y\n---\n")[2][0])
 
 
     def test_plain_values_yaml_reads_as_non_strings_are_reported(self):
