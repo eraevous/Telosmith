@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -73,6 +74,94 @@ class Render(Case):
         ledgers = block.split("### Records and ledgers")[1].split("Record terms")[0]
         self.assertEqual([ln for ln in ledgers.splitlines() if ln.startswith("- ")],
                          ["- `data/records.jsonl`", "- `decisions/log.jsonl`"])
+
+
+class KateRound7(Case):
+    """Gaps her round-7 records name (AEC-R-agents-render/-config/-block/-write/-check@1, independent)."""
+
+    def test_default_render_matches_the_fixture_exactly(self):
+        fixture = Path(__file__).resolve().parent / "fixtures" / "agents" / "default-block.md"
+        self.assertEqual(agents.render(config.own(self.root)), fixture.read_text(encoding="utf-8"))
+
+    def test_cwd_config_is_not_used(self):
+        other = Path(self._tmp.name) / "other"
+        (other / ".aec").mkdir(parents=True)
+        (other / ".aec" / "config.json").write_text(json.dumps({"agents": {"owner": "Wrong"}}), encoding="utf-8")
+        cwd = os.getcwd()
+        os.chdir(other)
+        try:
+            self.assertNotIn("Wrong", self.agents("show")[1])
+        finally:
+            os.chdir(cwd)
+
+    def test_300_and_301_characters(self):
+        self.conf({"owner": "x" * 300})
+        self.assertEqual(config.own(self.root).get("agents.owner"), "x" * 300)
+        self.conf({"owner": "x" * 301})
+        with self.assertRaises(config.ConfigError):
+            config.own(self.root)
+        self.conf({"owner": "a\tb"})
+        with self.assertRaises(config.ConfigError):
+            config.own(self.root)
+
+    def test_non_ascii_and_crlf_outside_the_block_are_kept_byte_for_byte(self):
+        before = "# Dépôt 日本\r\n\r\nRègle ✓\r\n".encode()
+        after = "\r\n## Fin — ok\r\n".encode()
+        self.md.write_bytes(before + (agents.BEGIN + "\nold\n" + agents.END + "\n").encode("utf-8") + after)
+        self.assertEqual(self.agents("write")[0], 0)
+        data = self.md.read_bytes()
+        self.assertTrue(data.startswith(before) and data.endswith(after))
+        self.assertEqual(self.agents("check")[0], 0)
+
+    def test_a_unicode_line_separator_does_not_make_a_marker_line(self):
+        text = OWN + agents.BEGIN + "\nx\n" + "prose\u2028" + agents.END + "\n" + agents.END + "\n"
+        self.md.write_text(text, encoding="utf-8", newline="")
+        self.assertEqual(self.agents("write")[0], 0)
+        self.assertNotIn("prose", self.md.read_text(encoding="utf-8"))   # replaced as block interior, not a split point
+        self.assertEqual(self.agents("check")[0], 0)
+
+    def test_no_op_keeps_the_inode(self):
+        self.with_markers()
+        self.agents("write")
+        inode = self.md.stat().st_ino
+        self.agents("write")
+        self.assertEqual(self.md.stat().st_ino, inode)
+
+    def test_a_failure_before_the_rename_leaves_the_original(self):
+        self.with_markers()
+        before = self.md.read_bytes()
+        with mock.patch("aec.agents.os.replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.agents("write")
+        self.assertEqual(self.md.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), [".aec", ".git", "AGENTS.md"])
+
+    def test_a_new_file_gets_the_umask_mode(self):
+        old = os.umask(0o027)
+        try:
+            self.assertEqual(self.agents("write", "--append")[0], 0)
+        finally:
+            os.umask(old)
+        self.assertEqual(self.md.stat().st_mode & 0o777, 0o640)
+
+    def test_show_and_check_take_no_append_and_never_write(self):
+        self.with_markers()
+        before = (self.md.read_bytes(), self.md.stat().st_mtime_ns)
+        for cmd in ("show", "check"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.agents(cmd, "--append")[0], 2)   # argparse: unknown option
+                self.agents(cmd)
+        self.assertEqual((self.md.read_bytes(), self.md.stat().st_mtime_ns), before)
+
+    def test_invalid_config_fails_check_and_show(self):
+        self.with_markers()
+        self.agents("write")
+        self.conf({"owner": "a`b"})
+        for cmd in ("show", "check"):
+            with self.subTest(cmd=cmd):
+                code, _, err = self.agents(cmd)
+                self.assertEqual(code, 1)
+                self.assertIn("agents.owner", err)
 
 
 class Write(Case):

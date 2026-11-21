@@ -1,6 +1,6 @@
 # The shared part of AGENTS.md: `aec agents`
 
-Author: claude:aec#wake-20261121-17 · Reviewer: none yet (Codex on open; Kate asked for the records) · model=claude-opus-5-5
+Author: claude:aec#wake-20261121-17 · Reviewer: Codex (two P2s fixed); API Kate (records `AEC-R-agents-*@1`, not the diff) · model=claude-opus-5-5
 
 DEC-256 item 4. Seven Telosmith-based repositories restated the same governance ideas in their AGENTS.md (what to read
 first, who decides what, which files are append-only, the hard rules, run and drift), each in different words.
@@ -50,11 +50,20 @@ does), never a parent's.
   permissions.
 - **Config texts**, and the `records` path (it is rendered too), are one printable line each, at most 300 characters, with no backtick and no HTML comment marker,
   so a value can't break the Markdown or forge an end marker.
-- **Deterministic:** the same config gives the same block, on every machine.
+- **`--append`** only applies when the file has no markers at all, or doesn't exist; it never gets past malformed
+  markers. `show` and `check` don't take it, and never write.
+- **New files** get the mode any new file would get under the current umask; an existing file keeps its mode. A
+  failure before the final rename leaves the original bytes and no temporary file.
+- **Invalid config:** every subcommand stops with exit 1 naming the problem, before reading or writing AGENTS.md.
+- **Encoding and line endings:** the file is read and written as UTF-8 (anything else is refused). Lines are split on
+  `\n` only. Bytes outside the block, CRLF included, are kept exactly; the block itself is always written with LF.
+- **Deterministic:** the same config gives the same block, on every machine. The default block is pinned by
+  `tests/fixtures/agents/default-block.md`, which is also the place to read the exact wording (the four shared hard
+  rules, the five drift triggers, the dissent review).
 
 ## Not yet
 
 - Removing the hand-written copies from the seven repositories: follow-up PRs there, one repository at a time.
 - Heading levels and wording per repository: the block is the same everywhere by design; a repository that needs
   more says it in its own sections.
-- Line endings: a file with CRLF line endings reads as stale under `check`; `write` puts the block in with LF.
+- A block that someone converted to CRLF reads as stale under `check`; `write` puts it back with LF.

@@ -91,7 +91,10 @@ def render(cfg: Config) -> str:
 
 def _split(text: str, path: Path) -> tuple[str, str, str] | None:
     """(before, block, after) when the file has exactly one well-formed marker pair, None when it has none."""
-    lines = text.splitlines(keepends=True)
+    # Split on "\n" only, keeping each line's ending (a "\r" stays with its line): str.splitlines would also split on
+    # U+2028 and friends, so marker text after one in a prose line would pass for a marker line.
+    parts = text.split("\n")
+    lines = [ln + "\n" for ln in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
     # A marker is a whole line: exactly BEGIN, its short form, or END. A line that starts like a marker but carries
     # anything else is refused rather than read as one, so no hand-written text on it is ever replaced (Codex, #101).
     for i, ln in enumerate(lines):
@@ -118,7 +121,7 @@ def _read(path: Path) -> str | None:
     if not path.is_file():
         raise AgentsError(f"{path}: not a regular file")
     try:
-        return path.read_text(encoding="utf-8")
+        return path.read_bytes().decode("utf-8")   # no newline translation: bytes outside the block stay as they are
     except (OSError, UnicodeDecodeError) as error:
         raise AgentsError(f"{path}: can't read it ({error})") from None
 
@@ -147,6 +150,10 @@ def _write(path: Path, text: str) -> None:
             f.write(text)
         if path.exists() and not path.is_symlink():
             os.chmod(tmp, path.stat().st_mode & 0o777)
+        else:  # a new file gets the mode any new file would (mkstemp's is 0600; Kate's AEC-R-agents-write@1 blocker)
+            mask = os.umask(0)
+            os.umask(mask)
+            os.chmod(tmp, 0o666 & ~mask)
         if path.is_symlink():
             raise AgentsError(f"{path}: became a symlink while writing; refused")
         os.replace(tmp, path)
