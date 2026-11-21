@@ -78,10 +78,14 @@ class Checkout(unittest.TestCase):
         self._git("add", "-A")
         self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg)
 
-    def _run(self, command, pythonpath="", project=None):
+    def _run(self, command, pythonpath="", project=None, env_extra=None):
         pythonpath = str(self.site) if pythonpath == "" else pythonpath
-        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project or self.project))
+        # An empty user base by default, so the runner's own ~/.local can't change a result.
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project or self.project),
+                   PYTHONUSERBASE=str(self.outside / "userbase"))
         env.pop("PYTHONPATH", None)
+        env.pop("PYTHONNOUSERSITE", None)
+        env.update(env_extra or {})
         if pythonpath is not None:
             env["PYTHONPATH"] = pythonpath
         return subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True, timeout=120)
@@ -229,8 +233,8 @@ class PreImportGate(Checkout):
     """The line runs `aec hook project` only for an aec pip-installed from git at the pinned commit, and decides
     that before any aec code, or any code on an environment import path, runs."""
 
-    def line(self, pythonpath=""):
-        return self._run(HOOK_LINE_COMMAND, pythonpath=pythonpath)
+    def line(self, pythonpath="", **kw):
+        return self._run(HOOK_LINE_COMMAND, pythonpath=pythonpath, **kw)
 
     def refused(self, done, text):
         self.assertEqual(done.returncode, 1, done.stderr)
@@ -278,6 +282,42 @@ class PreImportGate(Checkout):
             with self.subTest(name):
                 site = install(self.outside / f"site-{name.replace(' ', '-')}", **kwargs)
                 self.refused(self.line(str(site)), "is not a non-editable pip install from git of the pinned commit")
+
+    def test_wrong_commit_names_expected_and_installed_and_the_fix(self):
+        # Kate, DBN5 round 14: a git install at the wrong commit exits 1 naming both revisions and the pinned
+        # pip command.
+        site = install(self.outside / "site-wrong", commit=OTHER)
+        done = self.line(str(site))
+        self.refused(done, f"pinned commit {PIN[:12]} (tools/aec_upstream.json; installed: {OTHER[:12]})")
+        self.assertIn(f"pip install git+https://github.com/eraevous/Telosmith.git@{PIN}", done.stderr)
+
+    def _user_site(self):
+        """The user site `python3 -I` would compute under this test's PYTHONUSERBASE, or skip in a venv."""
+        probe = subprocess.run(
+            ["python3", "-I", "-c", "import site,sys;print(sys.prefix==sys.base_prefix);print(site.getusersitepackages())"],
+            env=dict(os.environ, PYTHONUSERBASE=str(self.outside / "userbase")), capture_output=True, text=True)
+        plain, path = probe.stdout.split("\n")[:2]
+        if plain != "True":
+            self.skipTest("python3 on PATH is a virtual environment; it has no user site")
+        return pathlib.Path(path)
+
+    def test_pinned_user_site_install_runs(self):
+        # Codex P2 on MtG#59: -I hides `pip install --user`; the gate adds the user site back as a plain path.
+        user = install(self._user_site())
+        marker = self.outside / "ran-user-pth"
+        (user / "evil.pth").write_text(f"import os; open({str(marker)!r}, 'w').close()\n")
+        usercustom = self.planted(user, "usercustomize.py")
+        done = self.line(None)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertFalse(marker.exists() or usercustom.exists(), "user-site startup code ran")
+
+    def test_user_site_install_at_the_wrong_commit_is_refused(self):
+        install(self._user_site(), commit=OTHER)
+        self.refused(self.line(None), f"installed: {OTHER[:12]}")
+
+    def test_pythonnousersite_keeps_the_user_site_out(self):
+        install(self._user_site())
+        self.refused(self.line(None, env_extra={"PYTHONNOUSERSITE": "1"}), "no aec is importable here")
 
     def test_malformed_provenance_shapes_get_the_one_line_diagnostic(self):
         # Copilot on #92: valid JSON of the wrong shape must not end in a traceback.
