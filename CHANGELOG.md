@@ -5,6 +5,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Added (AEC-R-snippets-render-impl@1, DEC-256 item 3)
+- `aec snippets show hook|ci [--repo D] [--ref SHA]` prints the hook settings and CI job `aec init` writes, rendered
+  from `.aec/config.json` (`init.hook_style`, `init.ci_name`) and the pin in `tools/aec_upstream.json`; offline.
+  `aec snippets check` exits 1 when a committed copy under `.aec/snippets/` differs from a fresh render.
+- `init.snippet_files` (default `true`, so `aec init` is unchanged): `false` writes no `.aec/snippets/` copies.
+  See `docs/integrations/snippets.md`.
+
 ### Changed (AEC-R-repo-config-impl@2, DEC-256 item 1, second slice)
 - `records` in `.aec/config.json` is now read by the commands whose records path is optional: `aec source show|search`,
   `aec import-purpose` and `aec mcp` (ROOT's own file), and `aec speckit derive|drift` (the file found by discovery).

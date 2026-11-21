@@ -478,7 +478,8 @@ CI_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 
 def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_anchor: str | None = None,
-         hooks: bool | None = None, ci_name: str = "aec", hook_style: str = "inline") -> dict:
+         hooks: bool | None = None, ci_name: str = "aec", hook_style: str = "inline",
+         snippet_files: bool = True) -> dict:
     """Scaffold .aec/ without overwriting anything.
 
     purpose: the text of P0@1 instead of the stub (still provisional: the owner commits it by appending P0@2).
@@ -487,7 +488,9 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     code, since code-impact has nothing to report in a repository without it.
     ci_name: the CI workflow's name, job id and file name (default `aec`).
     hook_style: `inline` (default) writes the whole hook body into the settings snippet; `line` writes a short
-    launcher that calls `aec hook project`, so the body updates with the installed package (opt-in)."""
+    launcher that calls `aec hook project`, so the body updates with the installed package (opt-in).
+    snippet_files: write the snippets under .aec/snippets/ (default). False writes none; the next steps name
+    `aec snippets show hook|ci`, which renders the same text from the config on demand (DEC-256 item 3)."""
     root = Path(root)
     aec = root / ".aec"
     created, kept = [], []
@@ -535,7 +538,7 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     put("README.md", lambda: README)
     # v0.4.1: the snapshot is generated; committing it makes every pair of code-touching PRs conflict.
     put(".gitignore", lambda: GITIGNORE)
-    if hooks:
+    if hooks and snippet_files:
         put("snippets/claude-settings.json", lambda: json.dumps(HOOK_STYLES[hook_style], indent=2) + "\n")
         put(f"snippets/{ci_name}-ci.yml", lambda: ci_snippet(ref, ci_name))
     pin_state = None
@@ -562,7 +565,11 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
                      '"epistemic": "committed".')
     else:
         steps.append("Replace the purpose stub P0 in .aec/records.jsonl with your own statement (append version 2).")
-    if hooks:
+    if hooks and not snippet_files:  # no copies: the same text comes from `aec snippets show` (snippets.py)
+        steps += ["Merge the output of `aec snippets show hook` into .claude/settings.json (init.snippet_files is "
+                  "false, so no copy was written under .aec/snippets/).",
+                  f"Write the output of `aec snippets show ci --ref {ref}` to .github/workflows/{ci_name}.yml."]
+    if hooks and snippet_files:
         steps += ["Copy .aec/snippets/claude-settings.json into .claude/settings.json (merge if one exists).",
                   (f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml (it pins Telosmith "
                    f"commit {ref})." if f".aec/snippets/{ci_name}-ci.yml" in created else
@@ -575,6 +582,15 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
                    f"(pip install \"{AEC_SOURCE}@{ref}\"); a newer Telosmith updates the hook body without "
                    "editing .claude/settings.json. To go back, run `aec init --hooks --hook-style inline` in an empty "
                    "directory and copy its .aec/snippets/claude-settings.json over.")]
+    if hooks:
+        if not snippet_files:
+            steps.append("The hook runs the aec installed in your environment: it needs `code-impact --exit-code` "
+                         f"(Telosmith 0.5.0 or later: pip install \"{AEC_SOURCE}@{ref}\")."
+                         if hook_style == "inline" else
+                         "The one-line hook runs `aec hook project` from the aec installed in your environment "
+                         f"(pip install \"{AEC_SOURCE}@{ref}\"); a newer Telosmith updates the hook body without "
+                         "editing .claude/settings.json. To go back, set init.hook_style to inline and merge `aec "
+                         "snippets show hook` over it.")
         if pin_state == "created":
             steps.append(f"Commit {PIN_FILE.as_posix()}: it pins Telosmith commit {ref}, the commit aec pin-check "
                          "compares against. The line hook enforces it only once its launcher has the pin gate "
@@ -598,6 +614,6 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     if spec_kit:
         steps.insert(1, "Spec Kit detected. Register the Telosmith hooks (report-only, removable): "
                         "specify extension add --dev <path-to-Telosmith-checkout>/extension")
-    if note and f".aec/snippets/{ci_name}-ci.yml" in created:
+    if note and (f".aec/snippets/{ci_name}-ci.yml" in created or (hooks and not snippet_files)):
         steps.insert(0, "Note: " + note)
     return {"created": created, "kept": kept, "spec_kit": spec_kit, "next_steps": "\n".join(steps)}
