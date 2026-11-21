@@ -73,6 +73,22 @@ class Parse(unittest.TestCase):
             fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
             self.assertEqual((problems, fm.get("description")), ([], want), raw)
 
+    def test_plain_metadata_keys_yaml_reads_as_non_strings_are_reported(self):
+        # Codex P2 on 3a0f0a3
+        for key in ("true", "123", "null", "2026-11-21"):
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: d\nmetadata:\n  {key}: v\n---\n")
+            self.assertTrue(problems, key)
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: d\nmetadata:\n  \"{key}\": v\n---\n")
+            self.assertEqual((problems, fm["metadata"]), ([], {key: "v"}), key)
+
+    def test_a_key_with_nothing_under_it_is_null_not_an_empty_mapping(self):
+        # Codex P2 on 3a0f0a3
+        fm, _, problems = skills.parse_skill_md("---\nname: a\ndescription: d\nmetadata:\n---\n")
+        self.assertTrue(problems)
+        self.assertNotIn("metadata", fm)
+        _, _, problems = skills.parse_skill_md("---\nname: a\ndescription:\n---\n")
+        self.assertTrue(problems)
+
     def test_quoted_metadata_keys(self):
         fm, _, problems = skills.parse_skill_md(
             "---\nname: a\ndescription: d\nmetadata:\n  \"x: y\": \"z\"\n  'release version': \"1\"\n---\n")
@@ -124,6 +140,11 @@ class Render(unittest.TestCase):
         fm, _, problems = skills.parse_skill_md(skills.render_skill(name="a", description="d", metadata=md))
         self.assertEqual(problems, [])
         self.assertEqual(fm["metadata"], md)
+
+    def test_empty_metadata_is_omitted(self):
+        text = skills.render_skill(name="a", description="d", metadata={})
+        self.assertNotIn("metadata", text)
+        self.assertEqual(skills.parse_skill_md(text)[2], [])
 
     def test_invalid_values_raise_skill_error(self):
         with self.assertRaises(skills.SkillError):

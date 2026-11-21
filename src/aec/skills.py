@@ -93,6 +93,10 @@ def _mapping_line(text: str, where: str, problems: list):
     if not m or m.group(2) is None:
         problems.append(f"{where}: expected 'key: value' inside the mapping")
         return None
+    if _NOT_A_STRING.fullmatch(m.group(1)):
+        problems.append(f"{where}: key {m.group(1)!r} is a YAML null, boolean, number or date, not a string "
+                        "(quote it)")
+        return None
     return m.group(1), m.group(2)
 
 
@@ -108,6 +112,7 @@ def parse_skill_md(text: str) -> tuple[dict, str, list[str]]:
     fm: dict = {}
     problems: list[str] = []
     current_map = None
+    opened: dict = {}
     for n, line in enumerate(lines[1:close], start=2):
         where = f"line {n}"
         if not line.strip() or line.lstrip().startswith("#"):
@@ -138,10 +143,15 @@ def parse_skill_md(text: str) -> tuple[dict, str, list[str]]:
             continue
         if raw is None or raw.strip() == "" or raw.strip().startswith("#"):
             fm[key] = current_map = {}  # a mapping follows (only metadata may be one)
+            opened[key] = where
             continue
         value = _scalar(raw, where, problems)
         if value is not None:
             fm[key] = value
+    for key, where in opened.items():
+        if fm.get(key) == {}:  # `key:` with nothing under it is YAML null, not an empty mapping
+            del fm[key]
+            problems.append(f"{where}: {key!r} has no value (YAML reads it as null); give a value or drop the key")
     body = "\n".join(lines[close + 1:])
     return fm, body, problems
 
@@ -222,7 +232,7 @@ def render_skill(*, name: str, description: str, body: str = "", license: str | 
         fm["license"] = license
     if compatibility is not None:
         fm["compatibility"] = compatibility
-    if metadata is not None:
+    if metadata is not None and metadata != {}:  # an empty mapping is omitted: a bare `metadata:` is YAML null
         fm["metadata"] = dict(metadata) if isinstance(metadata, dict) else metadata
     problems = validate_frontmatter(fm, name if isinstance(name, str) else None)
     if problems:
