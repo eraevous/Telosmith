@@ -217,8 +217,8 @@ class SnippetFilesSetting(Base):
         rep = self.init(snippet_files=False)
         self.assertFalse((self.root / ".aec" / "snippets").exists())
         self.assertFalse(any("snippets/" in c for c in rep["created"]))
-        self.assertIn("aec snippets show hook", rep["next_steps"])
-        self.assertIn(f"aec snippets show ci --ref {SHA}", rep["next_steps"])
+        self.assertIn("aec snippets show hook --hook-style inline", rep["next_steps"])
+        self.assertIn(f"aec snippets show ci --ci-name aec --ref {SHA}", rep["next_steps"])
         self.assertNotIn("Copy .aec/snippets", rep["next_steps"])
 
     def test_cli_init_reads_the_setting(self):
@@ -229,6 +229,45 @@ class SnippetFilesSetting(Base):
         self.assertEqual(code, 0)
         self.assertNotIn("snippets/", out.split("Next steps:")[0])
         self.assertIn("aec snippets show hook", out)
+
+    def test_init_flags_not_in_the_config_reach_the_suggested_commands(self):  # Codex P2 on #102 (3d699cb)
+        self.cfg({"snippet_files": False})
+        with mock.patch.object(I, "resolve_install_ref", return_value=(SHA, None)), \
+                mock.patch.object(I, "resolve_commit", side_effect=lambda rev, **_: rev):
+            code, out, _ = run(["init", str(self.root), "--owner", "t", "--hooks", "--hook-style", "line",
+                                "--ci-name", "gov"])
+        self.assertEqual(code, 0)
+        hook_cmd = "aec snippets show hook --hook-style line"
+        ci_cmd = f"aec snippets show ci --ci-name gov --ref {SHA}"
+        self.assertIn(hook_cmd, out)
+        self.assertIn(ci_cmd, out)
+        self.assertEqual(json.loads(snippets.render(self.root, "hook", hook_style="line")), I.HOOK_LINE)
+        code, ci_out, _ = run(["snippets", "show", "ci", "--repo", str(self.root), "--ci-name", "gov", "--ref", SHA])
+        self.assertEqual(ci_out, I.ci_snippet(SHA, "gov"))
+        self.assertIn(".github/workflows/gov.yml", out)
+
+
+class ExplicitFlags(Base):
+    def test_flags_win_over_the_config(self):
+        self.cfg({"hook_style": "line", "ci_name": "gov"})
+        code, out, _ = run(["snippets", "show", "hook", "--repo", str(self.root), "--hook-style", "inline"])
+        self.assertEqual(json.loads(out), I.HOOK)
+        self.assertEqual(snippets.render(self.root, "ci", SHA, ci_name="other"), I.ci_snippet(SHA, "other"))
+
+    def test_bad_flag_values_are_refused(self):
+        code, _, err = run(["snippets", "show", "ci", "--repo", str(self.root), "--ref", SHA, "--ci-name", "a b"])
+        self.assertEqual(code, 1)
+        self.assertIn("--ci-name", err)
+        code, _, _ = run(["snippets", "show", "hook", "--repo", str(self.root), "--hook-style", "loud"])
+        self.assertEqual(code, 2)  # argparse choices
+
+    def test_check_uses_the_flags(self):
+        folder = self.root / ".aec" / "snippets"
+        folder.mkdir()
+        (folder / "claude-settings.json").write_text(json.dumps(I.HOOK_LINE))
+        (folder / "gov-ci.yml").write_text(I.ci_snippet(SHA, "gov"))
+        self.assertTrue(snippets.check(self.root, SHA)[1])  # defaults: stale and misnamed
+        self.assertEqual(snippets.check(self.root, SHA, "line", "gov")[1], [])
 
 
 if __name__ == "__main__":

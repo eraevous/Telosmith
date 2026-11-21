@@ -33,15 +33,21 @@ class SnippetError(ValueError):
     """A snippet can't be rendered or checked; the message says what to supply."""
 
 
-def settings(root: str | Path, ref: str | None = None):
-    """(hook_style, ci_name, ref or None) from ROOT's own config and pin; raises SnippetError."""
+def settings(root: str | Path, ref: str | None = None, hook_style: str | None = None, ci_name: str | None = None):
+    """(hook_style, ci_name, ref or None): explicit values first, then ROOT's own config and pin, as `aec init`
+    resolves them (an explicit flag wins over the config). Raises SnippetError."""
     from .config import ConfigError, own
     root = Path(root)
     try:
         cfg = own(root)
     except ConfigError as error:
         raise SnippetError(str(error)) from None
-    style, name = cfg.get("init.hook_style"), cfg.get("init.ci_name")
+    style = hook_style if hook_style is not None else cfg.get("init.hook_style")
+    name = ci_name if ci_name is not None else cfg.get("init.ci_name")
+    if style not in HOOK_STYLES:
+        raise SnippetError(f"--hook-style {style!r}: one of {', '.join(HOOK_STYLES)}")
+    if not isinstance(name, str) or not CI_NAME.fullmatch(name):
+        raise SnippetError(f"--ci-name {name!r}: letters, digits, '_' or '-' (what aec init accepts)")
     if ref is not None:
         if not _SHA.fullmatch(ref):
             raise SnippetError(f"--ref {ref!r}: a full 40-character commit SHA (what aec init pins)")
@@ -55,9 +61,10 @@ def settings(root: str | Path, ref: str | None = None):
         return style, name, None
 
 
-def render(root: str | Path, which: str, ref: str | None = None) -> str:
-    """The text `aec init` would write for WHICH (`hook` or `ci`) in ROOT, from ROOT's config."""
-    style, name, ref = settings(root, ref)
+def render(root: str | Path, which: str, ref: str | None = None, hook_style: str | None = None,
+           ci_name: str | None = None) -> str:
+    """The text `aec init` would write for WHICH (`hook` or `ci`) in ROOT, from explicit values or ROOT's config."""
+    style, name, ref = settings(root, ref, hook_style, ci_name)
     if which == "hook":
         return json.dumps(HOOK_STYLES[style], indent=2) + "\n"
     if which == "ci":
@@ -68,7 +75,8 @@ def render(root: str | Path, which: str, ref: str | None = None) -> str:
     raise SnippetError(f"unknown snippet {which!r}: hook or ci")
 
 
-def check(root: str | Path, ref: str | None = None) -> tuple[list[str], list[str]]:
+def check(root: str | Path, ref: str | None = None, hook_style: str | None = None,
+          ci_name: str | None = None) -> tuple[list[str], list[str]]:
     """(ok lines, problem lines) for each committed copy under ROOT/.aec/snippets/. No copies: ([], [])."""
     root = Path(root)
     folder = root / SNIPPETS_DIR
@@ -76,7 +84,7 @@ def check(root: str | Path, ref: str | None = None) -> tuple[list[str], list[str
         return [], [f"{SNIPPETS_DIR.as_posix()}: a symlink; not read"]
     if not folder.is_dir():
         return [], []
-    style, name, ref = settings(root, ref)
+    style, name, ref = settings(root, ref, hook_style, ci_name)
     ok, bad = [], []
     for path in sorted(folder.iterdir()):
         rel = (SNIPPETS_DIR / path.name).as_posix()
@@ -85,7 +93,8 @@ def check(root: str | Path, ref: str | None = None) -> tuple[list[str], list[str
         elif path.name.endswith("-ci.yml") and CI_NAME.fullmatch(path.name[:-len("-ci.yml")]):
             which = "ci"
             if path.name != f"{name}-ci.yml":
-                bad.append(f"{rel}: init.ci_name is {name!r}, so aec init would write {name}-ci.yml, not this file")
+                bad.append(f"{rel}: the CI name is {name!r} (init.ci_name or --ci-name), so aec init would write "
+                           f"{name}-ci.yml, not this file")
                 continue
         else:
             ok.append(f"{rel}: not a Telosmith snippet; not checked")
@@ -102,12 +111,12 @@ def check(root: str | Path, ref: str | None = None) -> tuple[list[str], list[str
             bad.append(f"{rel}: can't check it, no commit to compare with (pass --ref or commit "
                        "tools/aec_upstream.json)")
             continue
-        fresh = render(root, which, ref)
+        fresh = render(root, which, ref, style, name)
         same = (_json(text) == _json(fresh)) if which == "hook" else text == fresh
         if same:
             ok.append(f"{rel}: current (matches `aec snippets show {which}`)")
         else:
-            why = f"init.hook_style {style!r}" if which == "hook" else f"init.ci_name {name!r}, commit {ref[:12]}"
+            why = f"hook style {style!r}" if which == "hook" else f"CI name {name!r}, commit {ref[:12]}"
             bad.append(f"{rel}: stale, differs from `aec snippets show {which}` ({why})")
     return ok, bad
 
@@ -129,14 +138,17 @@ def add_parser(sub) -> None:
                                                "fresh render")):
         q.add_argument("--repo", default=".", help="the repository root; only its own .aec/config.json counts")
         q.add_argument("--ref", help="full commit SHA for the CI job (default: commit in tools/aec_upstream.json)")
+        q.add_argument("--hook-style", choices=tuple(HOOK_STYLES), default=None,
+                       help="as aec init --hook-style; wins over init.hook_style in the config")
+        q.add_argument("--ci-name", default=None, help="as aec init --ci-name; wins over init.ci_name in the config")
 
 
 def cli(a, ap) -> int:
     try:
         if a.snippets_cmd == "show":
-            print(render(a.repo, a.which, a.ref), end="")
+            print(render(a.repo, a.which, a.ref, a.hook_style, a.ci_name), end="")
             return 0
-        ok, bad = check(a.repo, a.ref)
+        ok, bad = check(a.repo, a.ref, a.hook_style, a.ci_name)
     except SnippetError as error:
         print(f"snippets: {error}", file=sys.stderr)
         return 1

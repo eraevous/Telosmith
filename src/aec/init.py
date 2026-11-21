@@ -566,9 +566,11 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     else:
         steps.append("Replace the purpose stub P0 in .aec/records.jsonl with your own statement (append version 2).")
     if hooks and not snippet_files:  # no copies: the same text comes from `aec snippets show` (snippets.py)
-        steps += ["Merge the output of `aec snippets show hook` into .claude/settings.json (init.snippet_files is "
-                  "false, so no copy was written under .aec/snippets/).",
-                  f"Write the output of `aec snippets show ci --ref {ref}` to .github/workflows/{ci_name}.yml."]
+        # The commands carry the resolved values, so a flag given to init (not in the config) still applies.
+        steps += [f"Merge the output of `aec snippets show hook --hook-style {hook_style}` into .claude/settings.json "
+                  "(init.snippet_files is false, so no copy was written under .aec/snippets/).",
+                  f"Write the output of `aec snippets show ci --ci-name {ci_name} --ref {ref}` to "
+                  f".github/workflows/{ci_name}.yml."]
     if hooks and snippet_files:
         steps += ["Copy .aec/snippets/claude-settings.json into .claude/settings.json (merge if one exists).",
                   (f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml (it pins Telosmith "

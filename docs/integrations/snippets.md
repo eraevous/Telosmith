@@ -17,8 +17,8 @@ aec snippets check                     # are the committed copies under .aec/sni
 
 | Snippet | Value | Source, in order |
 |---|---|---|
-| hook | style | `init.hook_style` in ROOT's own `.aec/config.json`, else `inline` |
-| ci | job and file name | `init.ci_name`, else `aec` |
+| hook | style | `--hook-style`, else `init.hook_style` in ROOT's own `.aec/config.json`, else `inline` |
+| ci | job and file name | `--ci-name`, else `init.ci_name`, else `aec` |
 | ci | Telosmith commit | `--ref` (a full 40-character SHA), else `commit` in `tools/aec_upstream.json` (the one pin source, AEC-D-pin-check-scope@1) |
 
 Only ROOT's own config counts, as for `aec init`; a parent repository's config is never read. Nothing is fetched:
@@ -43,7 +43,8 @@ copies were current before deleting them, or in CI while copies remain.
 
 `aec init` still writes `.aec/snippets/` by default, so its behaviour is unchanged. Set
 `{"init": {"snippet_files": false}}` in `.aec/config.json` and `init` writes no copies; its next steps name the
-`aec snippets show` commands instead. Whether the default should flip is left to Zach (see the PR).
+`aec snippets show` commands instead, with the style, name and commit init resolved written out as flags, so a flag
+given to `init` but not in the config still applies (Codex P2 on #102). Whether the default should flip is left to Zach (see the PR).
 
 ## Not here
 
