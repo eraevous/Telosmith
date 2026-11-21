@@ -465,6 +465,10 @@ def _records(owner: str, purpose: str | None = None, anchor: dict | None = None)
     return "\n".join(r if isinstance(r, str) else json.dumps(r) for r in rows) + "\n"
 
 
+# A CI name names a workflow file and a job; .aec/config.json (init.ci_name) is checked against the same pattern.
+CI_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+
+
 def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_anchor: str | None = None,
          hooks: bool | None = None, ci_name: str = "aec", hook_style: str = "inline") -> dict:
     """Scaffold .aec/ without overwriting anything.
@@ -479,7 +483,7 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     root = Path(root)
     aec = root / ".aec"
     created, kept = [], []
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", ci_name or ""):
+    if not CI_NAME.fullmatch(ci_name or ""):
         raise ValueError(f"--ci-name {ci_name!r}: use letters, digits, - and _ (it names a workflow file and a job)")
     if hook_style not in HOOK_STYLES:
         raise ValueError(f"--hook-style {hook_style!r}: use one of {', '.join(HOOK_STYLES)}")

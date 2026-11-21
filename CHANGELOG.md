@@ -5,6 +5,12 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Added (AEC-R-repo-config-impl@1, DEC-256 item 1, first slice)
+- `.aec/config.json`, one per repository (`AEC-D-repo-config@2`), read by `aec.config`. Without it nothing changes.
+  Schema version 1 holds `records`, `init.ci_name` and `init.hook_style`; unknown keys, wrong types and paths outside
+  the repository are errors, all reported at once. Explicit flags win over the file. `aec init` reads ROOT's own file;
+  `aec config show` and `aec config check` print and validate it. See `docs/integrations/repo-config.md`.
+
 ### Changed (AEC-R-init-full-commit-pin@1)
 - `aec init` with hooks pins the generated CI job (and the install lines in its next steps) to a full 40-character
   commit. A release tag or `main` is resolved with `git ls-remote`, an annotated tag to its commit; when no commit
