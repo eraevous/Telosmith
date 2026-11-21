@@ -296,6 +296,9 @@ class TestStatelessProtocol(unittest.TestCase):
         self.assertIn("tools", r["result"]["capabilities"])
         self.assertEqual(r["result"]["instructions"], "use echo")
         self.assertNotIn("serverInfo", r["result"])  # moved to _meta after SEP-2575 became final (#3002)
+        self.assertEqual((r["result"]["ttlMs"], r["result"]["cacheScope"]), (0, "public"))  # Codex P2 on fee9a3b
+        self.assertEqual(modern(McpServer("x", "1", cache_scope="private"), "server/discover")["result"]["cacheScope"],
+                         "private")
         self.assertIsNone(self.srv.protocol)  # nothing kept between requests
 
     def test_tools_list_carries_cache_policy(self):
@@ -350,6 +353,20 @@ class TestStatelessProtocol(unittest.TestCase):
         self.assert_complete(modern(self.srv, "tools/list"))
         self.assertEqual(self.srv.protocol, "2025-11-25")  # the handshake's record is not changed by a stateless call
 
+    def test_era_is_chosen_per_request_whatever_the_order(self):  # Kate's AEC-R-mcp-era-routing@1
+        reqs = [("legacy", lambda: call(self.srv, "tools/list")),
+                ("v26", lambda: modern(self.srv, "tools/list")),
+                ("bad", lambda: modern(self.srv, "tools/list", version="2099-01-01")),
+                ("ping", lambda: call(self.srv, "ping"))]
+        import itertools
+        baseline = {k: f() for k, f in reqs}
+        for order in itertools.permutations(reqs):
+            srv_answers = {k: f() for k, f in order}
+            self.assertEqual(srv_answers, baseline, [k for k, _ in order])
+        self.assertEqual(set(baseline["legacy"]["result"]), {"tools"})
+        self.assertEqual(baseline["bad"]["error"]["code"], -32022)
+        self.assertEqual(baseline["ping"]["result"], {})
+
     def test_record_tools_over_the_new_revision(self):
         srv = telosmith_server(ROOT)
         r = modern(srv, "tools/call", {"name": "record_get", "arguments": {"ref": "AEC-P0"}})
@@ -373,6 +390,27 @@ class TestStdioEndToEnd(unittest.TestCase):
         self.assertEqual([r["id"] for r in replies], [1, 2])
         self.assertEqual(replies[0]["result"]["serverInfo"]["name"], "telosmith")
         self.assertEqual(replies[1]["result"]["structuredContent"]["record"]["id"], "AEC-P0")
+
+    def test_stateless_errors_over_stdio_and_the_session_goes_on(self):  # Kate's AEC-R-mcp-stateless-errors@1
+        def m(rid, method, version, caps=None):
+            meta = {"io.modelcontextprotocol/protocolVersion": version}
+            if caps is not None:
+                meta["io.modelcontextprotocol/clientCapabilities"] = caps
+            return {"jsonrpc": "2.0", "id": rid, "method": method, "params": {"_meta": meta}}
+        cases = [(m(1, "tools/list", "2099-01-01"), -32022), (m(2, "tools/list", 7), -32602),
+                 (m(3, "tools/list", V26, caps=[]), -32602), (m(4, "ping", V26), -32601),
+                 (m(5, "initialize", V26), -32601), (m(6, "nope/nothing", V26), -32601), (m(7, "tools/list", V26), None)]
+        env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+        p = subprocess.run([sys.executable, "-m", "aec", "mcp", "--root", str(ROOT)],
+                           input="".join(json.dumps(c) + "\n" for c, _ in cases),
+                           capture_output=True, text=True, env=env, cwd=ROOT, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        replies = [json.loads(x) for x in p.stdout.splitlines()]
+        self.assertEqual([r["id"] for r in replies], list(range(1, 8)))
+        for r, (_, code) in zip(replies, cases, strict=True):
+            self.assertEqual(r.get("error", {}).get("code"), code, r)
+        self.assertEqual(replies[0]["error"]["data"], {"supported": STATELESS, "requested": "2099-01-01"})
+        self.assertEqual(replies[-1]["result"]["resultType"], "complete")
 
     def test_stateless_discover_and_call_over_stdio(self):  # MCP 2026-07-28: no handshake, revision on each request
         meta = {"io.modelcontextprotocol/protocolVersion": V26, "io.modelcontextprotocol/clientCapabilities": {},

@@ -140,7 +140,9 @@ class McpServer:
         if caps is not None and not isinstance(caps, dict):
             raise RpcError(INVALID_PARAMS, f"_meta[{META_CLIENT_CAPS!r}] must be an object")
         if method == "server/discover":
-            result = {"supportedVersions": list(STATELESS), "capabilities": {"tools": {"listChanged": False}}}
+            # Discovery results are cacheable too (2026-07-28 caching utility; Codex P2 on fee9a3b): no reuse promised.
+            result = {"supportedVersions": list(STATELESS), "capabilities": {"tools": {"listChanged": False}},
+                      "ttlMs": 0, "cacheScope": self.cache_scope}
             if self.instructions:
                 result["instructions"] = self.instructions
         elif method == "tools/list":

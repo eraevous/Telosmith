@@ -52,10 +52,13 @@ Or start from `McpServer(name, version)` for a server without the record tools.
 - Protocol revisions 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25 through the `initialize` handshake. A
   client asking for another revision there is answered with the newest of these, and the client decides whether to
   go on (the MCP negotiation rule).
-- Protocol revision 2026-07-28 (stateless, SEP-2575), on the same server: no handshake. Every request names its
+- Protocol revision 2026-07-28 (stateless, SEP-2575), a subset of it, on the same server: no handshake. Every request names its
   revision in `params._meta["io.modelcontextprotocol/protocolVersion"]`; that key is what tells the two eras apart,
   so a request without it is handled as before.
-  - `server/discover` answers `supportedVersions` (`["2026-07-28"]`), `capabilities` and `instructions`.
+  - `server/discover` answers `supportedVersions` (`["2026-07-28"]` only: the handshake revisions can't be chosen
+    through `_meta`), `capabilities`, `instructions` and the cache policy `ttlMs: 0` with the server's `cacheScope`.
+  - The era is chosen for each request on its own, never latched for the connection. Reading a request without the
+    key as the earlier era is a compatibility exception: SEP-2575 says servers should reject a missing version.
   - `tools/list` adds the cache policy `ttlMs` and `cacheScope` (`McpServer(..., list_ttl_ms=0,
     cache_scope="public")` by default: no reuse promised; the list holds nothing user-specific).
   - Every result carries `resultType: "complete"` and the server's name and version in
