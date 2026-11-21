@@ -126,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     ip = sub.add_parser("import-purpose", help="import Codex++ purpose files as provisional, source-linked records")
     ip.add_argument("root", nargs="?", default=".")
     ip.add_argument("--dir", default="codex_++/purpose_files", help="purpose-file directory, relative to ROOT")
-    ip.add_argument("--records", help="default: ROOT/.aec/records.jsonl")
+    ip.add_argument("--records", help="default: records in ROOT/.aec/config.json, else ROOT/.aec/records.jsonl")
     ip.add_argument("--edges", help="default: a fresh snapshot of ROOT")
     ip.add_argument("--dry-run", action="store_true", help="report only; append nothing")
     source = sub.add_parser("source", help="offline source integrity and retrieval")
@@ -137,7 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("--max-lines", type=int, default=80)
     show.add_argument("--max-chars", type=int, default=240, help="maximum characters per source line, including truncation markers (default: 240)")
     show.add_argument("--repo", default=".", help="repository containing .aec/sources.json")
-    show.add_argument("--records", help="record file (default: ROOT/.aec/records.jsonl)")
+    show.add_argument("--records", help="record file (default: records in ROOT/.aec/config.json, else ROOT/.aec/records.jsonl)")
     search = source_sub.add_parser("search", help="search configured source roots directly", description="Search named configured roots by default; use --root to select one.")
     search.add_argument("pattern")
     search.add_argument("--root", help="configured alias, or . for the repository; default: named roots only")
@@ -145,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--max", type=int, default=20, dest="max_hits")
     search.add_argument("--max-chars", type=int, default=240, help="maximum characters per hit excerpt, including truncation markers (default: 240)")
     search.add_argument("--repo", default=".", help="repository containing .aec/sources.json")
-    search.add_argument("--records", help="record file (default: ROOT/.aec/records.jsonl)")
+    search.add_argument("--records", help="record file (default: records in ROOT/.aec/config.json, else ROOT/.aec/records.jsonl)")
     speckit.add_parser(sub)
     userhook.add_parser(sub)
     pin.add_parser(sub)
@@ -241,9 +241,13 @@ def _cmd_query(a, ap) -> int:
 
 
 def _cmd_source(a, ap) -> int:
+    from .config import ConfigError, records_path
     from .sources import SourceContext, render_search, render_show
     repo = Path(a.repo)
-    records = Path(a.records) if a.records else repo / ".aec/records.jsonl"
+    try:
+        records = records_path(a.records, repo)
+    except ConfigError as error:
+        ap.error(str(error))
     try:
         source_store = Store.load(records) if records.exists() else Store([])
         context = SourceContext(repo)
@@ -259,11 +263,11 @@ def _cmd_source(a, ap) -> int:
 
 
 def _cmd_init(a, ap) -> int:
-    from .config import Config, ConfigError, load, resolve
+    from .config import ConfigError, own, resolve
     from .init import init
     try:
         # Only ROOT's own .aec/config.json counts: init never reads a parent repository's settings.
-        cfg = load(a.root) if (Path(a.root) / ".aec").is_dir() else Config(None, None)
+        cfg = own(a.root)
     except ConfigError as error:
         ap.error(str(error))
     try:
@@ -326,7 +330,12 @@ def _cmd_import_purpose(a, ap) -> int:
     if not (root / a.dir).is_dir():
         print(f"aec import-purpose: no purpose-file directory {root / a.dir} (use --dir)", file=sys.stderr)
         return 2
-    rep = import_purpose(root, root / a.dir, Path(a.records) if a.records else root / ".aec" / "records.jsonl",
+    from .config import ConfigError, records_path
+    try:
+        records = records_path(a.records, root)
+    except ConfigError as error:
+        ap.error(str(error))
+    rep = import_purpose(root, root / a.dir, records,
                          E.load(a.edges) if a.edges else E.snapshot(root), dry_run=a.dry_run)
     print(render_import(rep))
     return 0

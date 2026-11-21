@@ -3,7 +3,8 @@
 Author: claude:aec#wake-20261120-19 · Reviewer: API Kate (records `AEC-R-repo-config-*@2`, independent); Codex · model=claude-opus-5-5
 
 Decided by Zach on Telosmith#94 (`AEC-D-repo-config@2`). Handoff HO-AEC-20261119-V8FC, DEC-256 item 1.
-This is the first slice: the loader, the schema, precedence, and one consumer (`aec init`).
+First slice (#97): the loader, the schema, precedence, and `aec init`. Second slice: the commands whose records
+path is optional read `records`.
 
 ## What it does
 
@@ -23,7 +24,7 @@ without it behaves exactly as before: every setting has a default equal to today
 |---|---|---|---|
 | `_doc` | string | none | nobody (JSON has no comments) |
 | `version` | `1` | `1` | the loader: any other value is an error |
-| `records` | relative path | `.aec/records.jsonl` | `aec config show` now; the record commands in a later slice |
+| `records` | relative path | `.aec/records.jsonl` | `aec source show\|search`, `aec import-purpose`, `aec mcp`, `aec speckit derive\|drift` (see below) |
 | `init.ci_name` | name (`A-Z a-z 0-9 _ -`, as `aec init` accepts) | `aec` | `aec init --ci-name` |
 | `init.hook_style` | `inline` or `line` | `inline` | `aec init --hook-style` |
 
@@ -37,8 +38,15 @@ without it behaves exactly as before: every setting has a default equal to today
   keys, unknown keys (top-level or nested), wrong types or values. Once the file parses, every problem is reported
   at once, with the file's path. Malformed JSON stops at its first parse error (line and column): nothing past it can
   be checked. An unknown key may mean the file was written for a newer Telosmith; the message says so.
-- **The records path is not yet used by the record commands.** `aec check RECORDS` and the others still take their
-  path as before. When they read the config (a later slice), an explicit `RECORDS` argument will still win.
+- **The records path** is read only by commands whose records path is optional:
+  - `aec source show|search --repo ROOT`, `aec import-purpose ROOT` and `aec mcp --root ROOT`: an explicit `--records`
+    first (relative to the working directory, as before; the config is then not read at all), then `records` in
+    ROOT's own `.aec/config.json` (resolved against ROOT; a parent's file is never read), then `ROOT/.aec/records.jsonl`.
+  - `aec speckit derive|drift`, which already search upward from the feature: an explicit `--records`, then `records`
+    from the config found by discovery, then the nearest `.aec/records.jsonl` above the feature, as before.
+  - An invalid config is an error for these commands only when they would use it (no explicit `--records`).
+  - `aec check RECORDS`, `impact`, `code-impact` and `append` take RECORDS as a required argument; that is unchanged
+    and the config never makes it optional (`AEC-R-repo-config-precedence@2`).
 - **Precedence:** an explicit flag, then the file, then the default. Reading never rewrites the file.
 - **Lists** (none yet): a list value replaces the default whole; nothing merges.
 
@@ -50,4 +58,5 @@ without it behaves exactly as before: every setting has a default equal to today
 ## Not yet
 
 Which checks run, hook strictness, the governance options `aec agents` renders (item 4), and the records path in the
-record commands. Each arrives with the code that reads it; until then those keys are unknown keys.
+editor hook (`aec hook`, which still reads `.aec/records.jsonl` and ignores `records`). Each arrives with the code that
+reads it; until then the new keys are unknown keys.

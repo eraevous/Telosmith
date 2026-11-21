@@ -5,6 +5,12 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Changed (AEC-R-repo-config-impl@2, DEC-256 item 1, second slice)
+- `records` in `.aec/config.json` is now read by the commands whose records path is optional: `aec source show|search`,
+  `aec import-purpose` and `aec mcp` (ROOT's own file), and `aec speckit derive|drift` (the file found by discovery).
+  An explicit `--records` still wins and the config is then not read. Without the key, every default is unchanged.
+  `aec check RECORDS`, `impact`, `code-impact` and `append` still require their RECORDS argument.
+
 ### Added (AEC-R-repo-config-impl@1, DEC-256 item 1, first slice)
 - `.aec/config.json`, one per repository (`AEC-D-repo-config@2`), read by `aec.config`. Without it nothing changes.
   Schema version 1 holds `records`, `init.ci_name` and `init.hook_style`; unknown keys, wrong types and paths outside

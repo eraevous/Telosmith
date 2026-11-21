@@ -14,7 +14,8 @@ Schema version 1 (every key optional):
 
   _doc               string   free prose, ignored (JSON has no comments)
   version            1        the schema version; any other value is an error
-  records            path     the records file (default `.aec/records.jsonl`)
+  records            path     the records file (default `.aec/records.jsonl`), for the commands whose
+                              records path is optional (`records_path`, `discovered_records`)
   init.ci_name       name     `aec init --ci-name` (default `aec`)
   init.hook_style    choice   `aec init --hook-style`: `inline` or `line` (default `inline`)
 
@@ -157,6 +158,33 @@ def load(start: str | Path = ".") -> Config:
     if problems:
         raise ConfigError(f"{path}: " + "; ".join(problems))
     return Config(root, path, values)
+
+
+def own(root: str | Path) -> Config:
+    """ROOT's own config, never a parent's: for `aec init` and the commands that take a ROOT or --repo."""
+    root = Path(root)
+    return load(root) if (root / ".aec").is_dir() else Config(None, None)
+
+
+def records_path(explicit, root: str | Path) -> Path:
+    """The records file for a command whose path is optional (AEC-R-repo-config-precedence@2).
+
+    An explicit path wins and keeps its existing meaning (relative to the working directory); then `records` in
+    ROOT's own config, resolved against ROOT; then the unchanged default `ROOT/.aec/records.jsonl`. With an explicit
+    path the config isn't read at all. Raises ConfigError when ROOT's config exists and is invalid."""
+    if explicit:
+        return Path(explicit)
+    cfg = own(root)
+    if "records" in cfg.values:
+        return cfg.path_of("records")
+    return Path(root) / ".aec" / "records.jsonl"
+
+
+def discovered_records(start: str | Path) -> Path | None:
+    """`records` from the config found by discovery from START, or None when no config sets it (the caller keeps
+    its own default). For commands that already search upward (the speckit ones). Raises ConfigError."""
+    cfg = load(start)
+    return cfg.path_of("records") if "records" in cfg.values else None
 
 
 def resolve(cli_value, config: Config, key: str):
