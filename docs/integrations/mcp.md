@@ -49,15 +49,32 @@ Or start from `McpServer(name, version)` for a server without the record tools.
 
 ## What it does and does not do
 
-- Protocol revisions 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25. A client asking for another revision is
-  answered with the newest of these, and the client decides whether to go on (the MCP negotiation rule).
+- Protocol revisions 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25 through the `initialize` handshake. A
+  client asking for another revision there is answered with the newest of these, and the client decides whether to
+  go on (the MCP negotiation rule).
+- Protocol revision 2026-07-28 (stateless, SEP-2575), on the same server: no handshake. Every request names its
+  revision in `params._meta["io.modelcontextprotocol/protocolVersion"]`; that key is what tells the two eras apart,
+  so a request without it is handled as before.
+  - `server/discover` answers `supportedVersions` (`["2026-07-28"]`), `capabilities` and `instructions`.
+  - `tools/list` adds the cache policy `ttlMs` and `cacheScope` (`McpServer(..., list_ttl_ms=0,
+    cache_scope="public")` by default: no reuse promised; the list holds nothing user-specific).
+  - Every result carries `resultType: "complete"` and the server's name and version in
+    `_meta["io.modelcontextprotocol/serverInfo"]`.
+  - Another revision in that key gets error `-32022` with `data: {"supported": [...], "requested": "..."}`; a
+    non-string revision or a non-object `clientCapabilities` gets `-32602`; `ping` and `initialize` get `-32601`
+    in this revision (it removed them).
+  - Not done: a missing `clientCapabilities` is accepted (read as none), the server never needs a client capability
+    so `-32021` never arises, and `clientInfo` is not read. `subscriptions/listen`, logging and multi-round
+    `input_required` results are not implemented (a tools-only server doesn't need them).
+  - Source: the 2026-07-28 changelog and SEP-2575 on modelcontextprotocol.io, read 2026-11-21 through a summary; no
+    independent 2026-07-28 client has run against it yet (item 6).
 - Arguments are checked against the tool's `inputSchema` before the handler runs: top-level `required`, and per
   property `type`, `enum` and `minimum` (plus `additionalProperties: false` when declared). A bad call comes back as
   a result with `isError`, as MCP 2025-11-25 asks, so the caller can correct it; the handler never sees it. Richer
   schema rules (nested objects, patterns) stay the handler's job.
 - A tool's unexpected exception comes back as `<tool> failed: internal error (<ExceptionType>)`. Its message can
   carry paths, so it goes to the server's stderr, not to the client.
-- Methods: `initialize`, `ping`, `tools/list`, `tools/call`; notifications are never answered. No resources, prompts,
+- Methods: `initialize`, `ping`, `tools/list`, `tools/call`, and `server/discover` for 2026-07-28; notifications are never answered. No resources, prompts,
   batches or HTTP transport: relay-kit's `tools/mcp_server.py` (relay-kit/mcp@2) has those for its records store.
 - Record text is data, not instructions; every record result carries a notice saying so. A recorded `authored_by` or
   `decided_by` is a claim in the file, not proof of who acted.
