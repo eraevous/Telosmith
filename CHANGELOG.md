@@ -5,6 +5,16 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Added (AEC-R-agent-skills-impl@1, AEC-R-authority-socket-impl@1, DEC-256 item 5, third slice)
+- `aec skills new NAME --description D` writes an Agent Skills folder (`SKILL.md`) and never overwrites; `aec skills
+  check PATH...` checks skill folders against the Agent Skills specification (name rules and folder match, lengths,
+  known fields), reading a documented YAML subset. Example skill: `examples/skills/telosmith-records/`. See
+  `docs/integrations/agent-skills.md`.
+- The authority socket (DEC-185) as a declared field: `aec a2a card --authority-needs|accepts|grants` (and
+  `build_card(authority=...)`) adds an A2A extension to `capabilities.extensions`; `aec a2a check` checks it. The
+  declaration is never required, never a grant, and names its protocol as undecided. See
+  `docs/integrations/authority-socket.md`.
+
 ### Changed (AEC-R-repo-config-impl@2, DEC-256 item 1, second slice)
 - `records` in `.aec/config.json` is now read by the commands whose records path is optional: `aec source show|search`,
   `aec import-purpose` and `aec mcp` (ROOT's own file), and `aec speckit derive|drift` (the file found by discovery).
