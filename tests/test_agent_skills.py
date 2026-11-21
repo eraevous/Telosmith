@@ -160,6 +160,14 @@ class Render(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertEqual(fm["metadata"], md)
 
+    def test_unicode_line_separators_round_trip(self):
+        # Codex P3 on 02919e1: U+2028 etc. were written literally and split the line on reading
+        value = "first\u2028second\x85third\u2029fourth\x0bfifth"
+        text = skills.render_skill(name="a", description=value, metadata={"k\u2028": value})
+        fm, _, problems = skills.parse_skill_md(text)
+        self.assertEqual(problems, [])
+        self.assertEqual((fm["description"], fm["metadata"]), (value, {"k\u2028": value}))
+
     def test_empty_metadata_is_omitted(self):
         text = skills.render_skill(name="a", description="d", metadata={})
         self.assertNotIn("metadata", text)

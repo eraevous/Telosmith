@@ -232,7 +232,11 @@ def find_skill_dirs(path) -> list[Path]:
 # --- writing -----------------------------------------------------------------------------------------
 
 def _quoted(v: str) -> str:
-    return json.dumps(v, ensure_ascii=False)
+    # Escape the Unicode line breaks str.splitlines() splits on, so the value stays on one line.
+    out = json.dumps(v, ensure_ascii=False)
+    for ch in ("\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
+        out = out.replace(ch, f"\\u{ord(ch):04x}")
+    return out
 
 
 def render_skill(*, name: str, description: str, body: str = "", license: str | None = None,
