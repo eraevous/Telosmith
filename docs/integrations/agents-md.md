@@ -41,13 +41,14 @@ does), never a parent's.
 
 ## Rules
 
-- **Markers:** exactly one begin line (starting `<!-- telosmith:agents:begin`) followed by exactly one end line, each on
-  a line of its own. Anything else (two blocks, a lone marker, end before begin) is refused and nothing is written.
+- **Markers:** exactly one begin line (`<!-- telosmith:agents:begin -->` or the full form `write` puts there) followed
+  by exactly one end line, each a whole line (leading or trailing spaces aside). Anything else (two blocks, a lone
+  marker, end before begin, a line that starts like a marker but carries more text) is refused and nothing is written.
   Marker text inside a sentence isn't a marker.
 - **Safety:** `--file` is relative and stays inside ROOT (no `..`). The file and every folder on the way to it must not
   be symlinks. The new text goes to a temporary file in the same folder and is renamed over the old one, keeping its
   permissions.
-- **Config texts** are one printable line each, at most 300 characters, with no backtick and no HTML comment marker,
+- **Config texts**, and the `records` path (it is rendered too), are one printable line each, at most 300 characters, with no backtick and no HTML comment marker,
   so a value can't break the Markdown or forge an end marker.
 - **Deterministic:** the same config gives the same block, on every machine.
 

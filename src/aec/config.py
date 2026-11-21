@@ -191,7 +191,12 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
     if "version" in doc and (type(doc["version"]) is not int or doc["version"] != SCHEMA_VERSION):
         problems.append(f"version: this Telosmith reads schema version {SCHEMA_VERSION}, got {doc['version']!r}")
     if "records" in doc:
+        # `aec agents` renders the records path into Markdown, so it gets the same text rules as the agents.* texts
+        # (Codex on #101: a path holding a newline and an end marker would forge the block's end).
+        before = len(problems)
         _check_path("records", doc["records"], problems)
+        if len(problems) == before:
+            _check_text("records", doc["records"], problems)
         values["records"] = doc["records"]
     if "init" in doc:
         init = doc["init"]

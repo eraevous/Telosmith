@@ -131,6 +131,25 @@ class Write(Case):
                 self.assertIn("expected one begin marker", err)
                 self.assertEqual(self.md.read_text(encoding="utf-8"), text)
 
+    def test_a_line_that_only_starts_like_a_marker_is_refused(self):   # Codex P2 on #101
+        b, e = agents.BEGIN + "\n", agents.END + "\n"
+        for text in (OWN + "<!-- telosmith:agents:begin --> keep this prose\nour rule\n" + e,
+                     OWN + "<!-- telosmith:agents:begin (anything) --> and more\nx\n" + e,
+                     OWN + b + "x\n" + "<!-- telosmith:agents:end --> trailing\n",
+                     OWN + "<!-- telosmith:agents:beginning -->\n" + b + "x\n" + e):
+            with self.subTest(text=text):
+                self.md.write_text(text, encoding="utf-8")
+                for cmd in (("write",), ("write", "--append"), ("check",)):
+                    code, _, err = self.agents(*cmd)
+                    self.assertEqual(code, 1)
+                    self.assertIn("starts like a telosmith:agents marker but isn't one", err)
+                self.assertEqual(self.md.read_text(encoding="utf-8"), text)
+
+    def test_indented_exact_markers_still_count(self):   # decoy
+        self.md.write_text(OWN + "  <!-- telosmith:agents:begin -->\nold\n  " + agents.END + "\n", encoding="utf-8")
+        self.assertEqual(self.agents("write")[0], 0)
+        self.assertEqual(self.agents("check")[0], 0)
+
     def test_marker_text_inside_a_line_is_not_a_marker(self):
         text = OWN + "Mention `" + agents.END + "` in prose.\n"
         self.md.write_text(text, encoding="utf-8")
@@ -230,6 +249,20 @@ class ConfigKeys(Case):
         self.bad({"ledgers": [3]}, "agents.ledgers[0]: must be a non-empty string")
         self.bad({"glossary": "http://example.org/g"}, "must start with https://")
         self.bad({"glossary": "C:/g.md"}, "agents.glossary: must be a relative path")
+
+    def test_records_path_cannot_break_the_block(self):   # Codex P2 on #101: records is rendered too
+        for bad in ("a\n<!-- telosmith:agents:end -->\nb.jsonl", "a`b.jsonl", "a<!--b.jsonl", "a-->b.jsonl"):
+            with self.subTest(bad=bad):
+                self.conf(records=bad)
+                with self.assertRaises(config.ConfigError) as caught:
+                    config.own(self.root)
+                self.assertIn("records:", str(caught.exception))
+                self.with_markers()
+                before = self.md.read_text(encoding="utf-8")
+                self.assertEqual(self.agents("write")[0], 1)
+                self.assertEqual(self.md.read_text(encoding="utf-8"), before)
+        self.conf(records="data/my records-v2.jsonl")   # decoy: an ordinary path still renders
+        self.assertIn("`data/my records-v2.jsonl`", agents.render(config.own(self.root)))
 
     def test_accepted_values(self):   # decoys for the refusals above
         self.conf({"owner": "Ana (maintainer)", "glossary": "https://example.org/g", "read_first": ["a/B.md"],
