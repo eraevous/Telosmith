@@ -70,6 +70,13 @@ class Checked(unittest.TestCase):
         del ext(card)["params"]
         self.assertTrue(a2a.validate_card(card))
 
+    def test_each_missing_declaration_member_fails(self):
+        # AEC-R-authority-socket@1 (Kate): missing required declaration members fail
+        for k in ("needs", "accepts", "grants", "protocol"):
+            card = self.card()
+            del ext(card)["params"][k]
+            self.assertTrue(a2a.validate_card(card), k)
+
     def test_other_extensions_only_need_a_uri(self):
         card = a2a.build_card(**BASE)
         card["capabilities"]["extensions"] = [{"uri": "https://example.test/ext", "params": {"any": 1}}]

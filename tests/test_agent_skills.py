@@ -60,6 +60,7 @@ class Parse(unittest.TestCase):
         for raw in ("description: >\n  folded", "description: [a, b]", "description: {a: b}", "description: &x y"):
             fm, _, problems = skills.parse_skill_md(f"---\nname: a\n{raw}\n---\n")
             self.assertTrue(problems, raw)
+            self.assertIn("unsupported YAML", problems[0], raw)  # AEC-R-agent-skills@1 (Kate): say unsupported
             self.assertNotIn("description", fm, raw)
 
     def test_repeated_key_and_plain_value_with_colon(self):
@@ -162,6 +163,12 @@ class Render(unittest.TestCase):
         self.assertEqual(fm["description"], 'Quotes " and \\ and: colons # too')
         self.assertEqual(fm["metadata"], {"a": "b: c"})
         self.assertEqual(body, "# demo")
+
+    def test_non_ascii_round_trips(self):
+        # AEC-R-agent-skills@1 (Kate): quotes, backslashes and non-ASCII description text
+        value = 'Résumé \u00fcber \u6f22\u5b57 "q" \\ \U0001F600'
+        fm, _, problems = skills.parse_skill_md(skills.render_skill(name="a", description=value))
+        self.assertEqual((problems, fm["description"]), ([], value))
 
     def test_any_string_metadata_key_round_trips(self):
         # Codex P2 on b9772d8: keys were written unquoted, so 'x: y' made invalid YAML.

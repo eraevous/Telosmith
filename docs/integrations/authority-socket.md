@@ -28,9 +28,13 @@ aec a2a card --name N --description D --version V --url URL \
 
 Python: `aec.a2a.build_card(..., authority={"needs": [...], "accepts": [...], "grants": [...]})`.
 
+The URI is pinned: `aec.a2a.AUTHORITY_EXTENSION_URI`, exactly the string above. The location (an A2A extension) is
+provisional and doesn't settle item 7's manifest schema; that stays Zach's decision (Kate, round 6).
+
 ## Rules the checker applies (`aec a2a check`)
 
-- `needs`, `accepts` and `grants` are lists of non-empty strings (empty lists allowed); no other keys but `protocol`.
+- `needs`, `accepts`, `grants` and `protocol` must all be present; the three lists hold non-empty strings (empty lists
+  allowed); no other keys.
 - `protocol` is exactly `undecided (DEC-185)` until Zach adopts a protocol.
 - `required` is never `true`: a client may not be made to depend on a protocol that doesn't exist.
 - Other extensions need only a non-empty `uri`.

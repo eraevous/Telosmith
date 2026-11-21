@@ -43,6 +43,16 @@ date (`null`, `true`, `yes`, `123`, `2026-11-21`) is reported: quote it when tex
 scalars (`>`, `|`), lists, flow mappings, anchors and tags are reported as outside the subset, never guessed at. A
 skill that uses them may still be valid upstream; the upstream validator is `skills-ref validate`.
 
+## Details (answers to Kate's round-6 blockers, `AEC-R-agent-skills@1`)
+
+- `compatibility`, `license`, `metadata` and `allowed-tools` are optional. `license` and `allowed-tools` are strings
+  (`license` non-empty; `allowed-tools` not further checked).
+- A repeated key, at the top level or inside `metadata`, is reported; the first value is kept for the other checks.
+- `check PATH` on a folder with no `SKILL.md` in it or its immediate subfolders exits 1 ("no SKILL.md here").
+- Symlinks: see "Use it" above. With a relative `--dir`, ancestors are checked too; with an absolute one, they aren't.
+- Syntax outside the subset is reported as **unsupported YAML** with exit 1: "not checked" never passes as valid.
+  This is a subset checker, not a full upstream validator.
+
 ## Example
 
 `examples/skills/telosmith-records/` is a real skill: how an agent reads and checks a repository's Telosmith records

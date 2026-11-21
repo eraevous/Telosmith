@@ -67,8 +67,8 @@ def _scalar(raw: str, where: str, problems: list) -> str | None:
             return None
         return m.group(1).replace("''", "'")
     if raw[:1] in ("|", ">", "[", "{", "&", "*", "!", "@", "`"):
-        problems.append(f"{where}: {raw[:1]!r} starts YAML outside the subset this checker reads "
-                        "(use a plain or quoted one-line value)")
+        problems.append(f"{where}: unsupported YAML: {raw[:1]!r} starts syntax outside the subset this checker "
+                        "reads (use a plain or quoted one-line value)")
         return None
     if raw[:1] in (",", "%", "#", "]", "}") or re.match(r"[-?:](\s|$)", raw):
         # YAML can't start a plain scalar with these (`- x` is a list, `? x` a complex key, `#` a comment)
