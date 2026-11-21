@@ -43,7 +43,15 @@ without it behaves exactly as before: every setting has a default equal to today
     first (relative to the working directory, as before; the config is then not read at all), then `records` in
     ROOT's own `.aec/config.json` (resolved against ROOT; a parent's file is never read), then `ROOT/.aec/records.jsonl`.
   - `aec speckit derive|drift`, which already search upward from the feature: an explicit `--records`, then `records`
-    from the config found by discovery, then the nearest `.aec/records.jsonl` above the feature, as before.
+    from the config found by discovery, then the nearest `.aec/records.jsonl` above the feature, as before. In detail:
+    - Discovery is the rule above, started from the spec's directory: it stops at the nearest directory holding
+      `.aec/` and never passes the git top. It doesn't look further for a config that sets `records`.
+    - If that directory has no `config.json`, or its config sets no `records`, the command falls back at once to the
+      nearest `.aec/records.jsonl` above the feature (the search it always made; it is not bounded by the git top).
+      An outer repository's config is never read.
+    - A configured `records` resolves against the directory discovery stopped at, never the working directory.
+  - The two rules differ on purpose: an explicit ROOT names the repository, so only its own file counts; a feature
+    path names it implicitly, so discovery finds it. The order (explicit, config, default) is the same for both.
   - An invalid config is an error for these commands only when they would use it (no explicit `--records`).
   - `aec check RECORDS`, `impact`, `code-impact` and `append` take RECORDS as a required argument; that is unchanged
     and the config never makes it optional (`AEC-R-repo-config-precedence@2`).

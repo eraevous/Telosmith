@@ -210,6 +210,134 @@ class Speckit(unittest.TestCase):
             self.assertTrue(out.startswith("0 finding(s)"), out)
 
 
+
+class KateRecordsRound5(unittest.TestCase):
+    """The tests AEC-R-repo-config-records@1 (API Kate, round 5) asks for that the slice-2 tests didn't cover."""
+
+    def parent_with_config(self, r):
+        """A parent directory above ROOT with its own .aec/config.json pointing at a file holding R-PARENT."""
+        parent = r.root.parent
+        (parent / ".aec").mkdir(exist_ok=True)
+        (parent / "p.jsonl").write_text(rec("R-PARENT", "parent file") + "\n", encoding="utf-8")
+        (parent / ".aec" / "config.json").write_text(json.dumps({"records": "p.jsonl"}), encoding="utf-8")
+        return parent
+
+    def test_root_taking_consumers_ignore_a_parent_config_from_any_cwd(self):
+        with Repo() as r:
+            parent = self.parent_with_config(r)
+            for cwd in (parent, r.root / "records"):
+                with self.subTest(cwd=str(cwd)):
+                    # ROOT has no config: the default file, never the parent's configured one
+                    self.assertEqual(run(["source", "show", "R-DEFAULT@1", "--repo", str(r.root)], cwd=cwd)[0], 0)
+                    self.assertNotEqual(run(["source", "show", "R-PARENT@1", "--repo", str(r.root)], cwd=cwd)[0], 0)
+                    self.assertEqual(_ids(telosmith_server(r.root)), ["R-DEFAULT"])
+            r.configure({"records": "records/main.jsonl"})  # conflicting configs: ROOT's own wins, from the parent's cwd
+            code, out, err = run(["source", "show", "R-CONFIG@1", "--repo", str(r.root)], cwd=parent)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(_ids(telosmith_server(r.root)), ["R-CONFIG"])
+
+    def test_source_search_follows_the_same_order(self):
+        # search reports source-root hits; the records file only feeds each hit's digest check, so watch which
+        # file it loads
+        from unittest import mock
+
+        from aec.records import Store
+        loaded = []
+        real = Store.load.__func__
+
+        def spy(cls, path, *args, **kw):
+            loaded.append(Path(path))
+            return real(cls, path, *args, **kw)
+
+        with Repo() as r, mock.patch.object(Store, "load", classmethod(spy)):
+            argv = ["source", "search", "file", "--root", ".", "--repo", str(r.root)]
+            self.assertEqual(run(argv)[0], 0)
+            r.configure({"records": "records/main.jsonl"})
+            self.assertEqual(run(argv, cwd=r.root.parent)[0], 0)
+            self.assertEqual(run(argv + ["--records", str(r.other)])[0], 0)
+            self.assertEqual(loaded, [r.root / ".aec" / "records.jsonl", r.root / "records" / "main.jsonl", r.other])
+            r.configure("{broken")  # bypassed by an explicit path, an error otherwise
+            self.assertEqual(run(argv + ["--records", str(r.other)])[0], 0)
+            self.assertNotEqual(run(argv)[0], 0)
+
+    def test_import_purpose_ignores_a_parent_config(self):
+        with Repo() as r:
+            parent = self.parent_with_config(r)
+            pdir = r.root / "codex_++" / "purpose_files"
+            pdir.mkdir(parents=True)
+            (pdir / "demo.purpose.md").write_text("# demo\n\n## Purpose\n\nDo one thing well.\n", encoding="utf-8")
+            before_parent = (parent / "p.jsonl").read_text(encoding="utf-8")
+            code, _, err = run(["import-purpose", str(r.root)], cwd=parent)
+            self.assertEqual(code, 0, err)
+            self.assertEqual((parent / "p.jsonl").read_text(encoding="utf-8"), before_parent)
+            self.assertIn("PF-demo", (r.root / ".aec" / "records.jsonl").read_text(encoding="utf-8"))
+
+    def test_positional_records_commands_ignore_even_an_invalid_config(self):
+        with Repo() as r:
+            r.configure({"records": 7, "colour": "red"})
+            code, out, err = run(["check", str(r.root / ".aec" / "records.jsonl")], cwd=r.root)
+            self.assertEqual(code, 0, out + err)
+            self.assertNotIn("config", out + err)
+
+    def test_editor_hook_checks_the_default_records_whatever_the_config_says(self):
+        from unittest import mock
+
+        from aec import userhook
+        with Repo() as r:
+            r.configure({"records": 7, "colour": "red"})
+            calls = []
+            with mock.patch.object(userhook, "_produce", return_value=0), \
+                    mock.patch.object(userhook, "_call", side_effect=lambda argv: calls.append(argv) or (0, "")):
+                self.assertEqual(userhook.body(str(r.root)), 0)
+            self.assertEqual(calls[0][:2], ["check", str(r.root / ".aec" / "records.jsonl")])
+
+
+class SpeckitDiscovery(unittest.TestCase):
+    """Kate's round-5 blocker: what stops discovery, what a config without `records` does, which root anchors."""
+
+    def test_derive_follows_explicit_then_config_then_nearest_file(self):
+        with Repo() as r:
+            f = Speckit().feature(r)
+            code, out, _ = run(["speckit", "derive", str(f), "--check"])
+            self.assertEqual(code, 0, out)
+            r.configure({"records": "records/main.jsonl"})
+            self.assertEqual(run(["speckit", "derive", str(f), "--check"])[0], 0)
+            r.configure("{broken")
+            self.assertEqual(run(["speckit", "derive", str(f), "--check"])[0], 2)
+            code, out, _ = run(["speckit", "derive", str(f), "--check", "--records", str(r.other)])
+            self.assertEqual(code, 0, out)
+
+    def test_nearest_aec_without_records_falls_back_without_reading_an_outer_config(self):
+        with Repo() as r:
+            r.configure({"records": "records/main.jsonl"})  # outer config names R-CONFIG's file
+            inner = r.root / "pkg"
+            (inner / ".aec").mkdir(parents=True)
+            (inner / ".aec" / "config.json").write_text(json.dumps({"version": 1}), encoding="utf-8")
+            f = inner / "specs" / "001-demo"
+            f.mkdir(parents=True)
+            (f / "spec.md").write_text(Speckit.SPEC, encoding="utf-8")
+            # discovery stops at pkg/.aec; it sets no records, so the nearest records file above the feature is used:
+            # ROOT/.aec/records.jsonl (no R-CONFIG@1), not the outer config's records/main.jsonl
+            _, out, _ = run(["speckit", "drift", str(f)])
+            self.assertIn("unresolved-citation", out)
+            (inner / ".aec" / "config.json").write_text(json.dumps({"records": "r.jsonl"}), encoding="utf-8")
+            (inner / "r.jsonl").write_text(rec("R-CONFIG", "inner file") + "\n", encoding="utf-8")
+            _, out, _ = run(["speckit", "drift", str(f)], cwd=r.root.parent)  # resolved against pkg/, not cwd
+            self.assertTrue(out.startswith("0 finding(s)"), out)
+
+    def test_an_outer_config_is_not_read_across_the_git_top(self):
+        with Repo() as r:
+            r.configure({"records": "records/main.jsonl"})
+            sub = r.root / "vendored"
+            (sub / ".git").mkdir(parents=True)
+            (sub / ".aec").mkdir()
+            (sub / ".aec" / "records.jsonl").write_text(rec("R-SUB", "sub") + "\n", encoding="utf-8")
+            self.assertIsNone(config.discovered_records(sub))
+            nested = r.root / "plain" / "deep"
+            nested.mkdir(parents=True)
+            (r.root / "plain" / ".git").mkdir()  # a git top with no .aec/ between it and the feature
+            self.assertIsNone(config.discovered_records(nested))
+
 def _ids(srv):
     req = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "records_list", "arguments": {}}}
     res = srv.handle(req)["result"]
