@@ -247,6 +247,59 @@ class SnippetFilesSetting(Base):
         self.assertIn(".github/workflows/gov.yml", out)
 
 
+class KateRound8(Base):
+    """Cases her round-8 records name (AEC-R-snippets-show-ci@1, -check@1, AEC-R-init-snippet-files@1)."""
+
+    def test_an_invalid_ref_does_not_fall_back_to_a_valid_pin(self):
+        self.pin(SHA)
+        code, out, _ = run(["snippets", "show", "ci", "--repo", str(self.root), "--ref", "main"])
+        self.assertEqual((code, out), (1, ""))
+
+    def test_show_and_check_work_with_the_network_blocked(self):
+        self.pin(SHA)
+        boom = AssertionError("network or resolution attempted")
+        with mock.patch("socket.socket", side_effect=boom), mock.patch("subprocess.run", side_effect=boom), \
+                mock.patch.object(I, "resolve_commit", side_effect=boom), \
+                mock.patch.object(I, "resolve_install_ref", side_effect=boom):
+            self.assertEqual(snippets.render(self.root, "ci"), I.ci_snippet(SHA))
+            self.assertEqual(snippets.check(self.root), ([], []))
+        self.tearDown(); self.setUp()
+        with mock.patch("socket.socket", side_effect=boom), mock.patch("subprocess.run", side_effect=boom):
+            with self.assertRaises(snippets.SnippetError):   # no pin: fails, never resolves
+                snippets.render(self.root, "ci")
+
+    def test_malformed_json_dangling_links_and_directories_fail(self):
+        folder = self.root / ".aec" / "snippets"
+        folder.mkdir()
+        (folder / "claude-settings.json").write_text("{not json")
+        self.assertTrue(any("claude-settings.json: stale" in b for b in snippets.check(self.root, SHA)[1]))
+        (folder / "claude-settings.json").unlink()
+        os.symlink(self.root / "missing", folder / "claude-settings.json")
+        self.assertTrue(any("not a regular file" in b for b in snippets.check(self.root, SHA)[1]))
+        (folder / "claude-settings.json").unlink()
+        (folder / "aec-ci.yml").mkdir()
+        self.assertTrue(any("aec-ci.yml: not a regular file" in b for b in snippets.check(self.root, SHA)[1]))
+
+    def test_empty_snippets_folder_passes(self):
+        (self.root / ".aec" / "snippets").mkdir()
+        self.assertEqual(snippets.check(self.root, SHA), ([], []))
+
+    def test_snippet_files_false_leaves_existing_copies_untouched(self):
+        folder = self.root / ".aec" / "snippets"
+        folder.mkdir()
+        (folder / "claude-settings.json").write_text("mine\n")
+        rep = self.init(snippet_files=False)
+        self.assertEqual((folder / "claude-settings.json").read_text(), "mine\n")
+        self.assertEqual(sorted(x.name for x in folder.iterdir()), ["claude-settings.json"])
+        self.assertFalse(any("snippets/" in k for k in rep["created"] + rep["kept"]))
+
+    def test_snippet_files_true_explicitly_writes_copies(self):
+        self.cfg({"snippet_files": True})
+        self.assertIs(config.load(self.root).get("init.snippet_files"), True)
+        rep = self.init(snippet_files=True)
+        self.assertIn(".aec/snippets/aec-ci.yml", rep["created"])
+
+
 class ExplicitFlags(Base):
     def test_flags_win_over_the_config(self):
         self.cfg({"hook_style": "line", "ci_name": "gov"})

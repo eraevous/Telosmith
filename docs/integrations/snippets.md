@@ -44,7 +44,7 @@ copies were current before deleting them, or in CI while copies remain.
 `aec init` still writes `.aec/snippets/` by default, so its behaviour is unchanged. Set
 `{"init": {"snippet_files": false}}` in `.aec/config.json` and `init` writes no copies; its next steps name the
 `aec snippets show` commands instead, with the style, name and commit init resolved written out as flags, so a flag
-given to `init` but not in the config still applies (Codex P2 on #102). Whether the default should flip is left to Zach (see the PR).
+given to `init` but not in the config still applies (Codex P2 on #102). Whether the default should flip is left to Zach (see the PR): Kate's `AEC-R-init-snippet-files@1` (independent) asks for `false`; this PR keeps `true` so `aec init`'s output is unchanged until he decides. An empty or absent `.aec/snippets/` passes `check`; a symlinked one fails without being read.
 
 ## Not here
 
