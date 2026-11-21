@@ -111,7 +111,7 @@ def parse_skill_md(text: str) -> tuple[dict, str, list[str]]:
         return {}, text, ["the front matter has no closing '---' line"]
     fm: dict = {}
     problems: list[str] = []
-    current_map = None
+    current_map = map_indent = None
     opened: dict = {}
     for n, line in enumerate(lines[1:close], start=2):
         where = f"line {n}"
@@ -120,6 +120,16 @@ def parse_skill_md(text: str) -> tuple[dict, str, list[str]]:
         if line[:1] in (" ", "\t"):
             if current_map is None:
                 problems.append(f"{where}: indented line outside a mapping")
+                continue
+            indent = line[:len(line) - len(line.lstrip(" \t"))]
+            if "\t" in indent:
+                problems.append(f"{where}: a tab in indentation (YAML allows spaces only)")
+                continue
+            if map_indent is None:
+                map_indent = indent
+            elif indent != map_indent:
+                problems.append(f"{where}: indented {len(indent)} spaces where the mapping's entries use "
+                                f"{len(map_indent)} (nesting is outside the subset)")
                 continue
             parsed = _mapping_line(line.strip(), where, problems)
             if parsed is None:
@@ -132,7 +142,7 @@ def parse_skill_md(text: str) -> tuple[dict, str, list[str]]:
             if value is not None:
                 current_map[key] = value
             continue
-        current_map = None
+        current_map = map_indent = None
         m = _KEY_LINE.match(line)
         if not m:
             problems.append(f"{where}: expected 'key: value'")

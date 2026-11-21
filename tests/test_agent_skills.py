@@ -89,6 +89,15 @@ class Parse(unittest.TestCase):
         _, _, problems = skills.parse_skill_md("---\nname: a\ndescription:\n---\n")
         self.assertTrue(problems)
 
+    def test_misaligned_or_tab_indented_metadata_is_reported(self):
+        # Codex P2 on afa91a8: entries at different indents were flattened into siblings
+        for md in ("  author: alice\n    version: one", "    author: alice\n  version: one", "\tauthor: alice"):
+            _, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: d\nmetadata:\n{md}\n---\n")
+            self.assertTrue(problems, md)
+        fm, _, problems = skills.parse_skill_md(  # decoy: consistent 4-space entries
+            "---\nname: a\ndescription: d\nmetadata:\n    author: alice\n    version: one\n---\n")
+        self.assertEqual((problems, fm["metadata"]), ([], {"author": "alice", "version": "one"}))
+
     def test_quoted_metadata_keys(self):
         fm, _, problems = skills.parse_skill_md(
             "---\nname: a\ndescription: d\nmetadata:\n  \"x: y\": \"z\"\n  'release version': \"1\"\n---\n")
