@@ -1,0 +1,132 @@
+# Tool manifest: proposed schema (Agent Card plus MCP listings)
+
+Author: claude:aec#wake-20261121-21 · Reviewer: none yet (Codex on open; Kate asked for the records) · model=claude-opus-5-5
+
+Status: **proposed, not accepted** (`AEC-D-manifest-schema@1`). DEC-256 item 7, handoff HO-AEC-20261119-V8FC. DEC-177
+says every new tool ships a manifest declaring its sockets and leaves the schema to R&D; DEC-256 asks for a proposal
+"as Agent Card plus MCP listings". Zach accepts or changes it. No code ships with this page.
+
+## What it is for
+
+A tool built with the Dev Kit connects with every other one (DEC-256). The manifest is the one file another tool,
+an agent or a reviewer reads to learn **what sockets this tool has and what each one looks like on the wire**,
+without running it. It does not replace the live sockets: a client still discovers an MCP server over MCP and an
+agent through its A2A Agent Card. The manifest is the committed, checkable copy of those answers, plus the two things
+no standard carries yet: the authority declaration (DEC-185) and the sockets that aren't MCP or A2A yet.
+
+## The proposal
+
+One JSON file per tool, `telosmith.manifest/1`. Worked example: [`examples/manifest/telosmith.manifest.json`](../../examples/manifest/telosmith.manifest.json)
+(Telosmith itself; its `mcp` section is the real `tools/list` output of `aec mcp`).
+
+```json
+{
+  "manifest": "telosmith.manifest/1",
+  "tool":    {"id": "...", "name": "...", "version": "...", "description": "..."},
+  "sockets": {
+    "mcp":       {"transport": "stdio", "command": ["..."], "protocolVersions": ["..."], "serverInfo": {}, "capabilities": {},
+                  "tools": [], "resources": [], "resourceTemplates": [], "prompts": []},
+    "a2a":       {"agentCard": {}},
+    "skills":    [{"path": "...", "name": "...", "description": "..."}],
+    "authority": {"needs": [], "accepts": [], "grants": [], "protocol": "undecided (DEC-185)"},
+    "other":     [{"id": "...", "kind": "...", "direction": "in|out", "location": "...", "planned": "..."}]
+  },
+  "runtime": {"network": false, "model_calls": false, "dependencies": "..."}
+}
+```
+
+**Rules**
+
+1. **Each standard's section holds that standard's own objects, unchanged.** `mcp.tools` is the `tools` array of a
+   `tools/list` result, field for field; `a2a.agentCard` is an A2A 1.0 Agent Card as `aec a2a card` writes it;
+   `skills` points at `SKILL.md` folders that pass `aec skills check`. Telosmith owns only the envelope, so nothing
+   translates one standard into another and nothing can be lost in that translation.
+2. **Every socket key is present.** A tool that has no A2A endpoint writes `"a2a": null`; no skills is `[]`. An
+   absent key is an error, so "we don't speak A2A" is a statement in the file, not something a reader infers from a gap.
+3. **Generated, then checked, not hand-written** (after acceptance, a follow-up PR): `aec manifest build` starts the
+   tool's MCP server and copies its listings, builds the card, reads the skill folders and takes `tool`, `authority`
+   and `runtime` from `.aec/config.json`. `aec manifest check` rebuilds and reports any difference, in CI. This is
+   the lesson from October in this repository's AGENTS.md: a copy that something downstream maintains by hand drifts
+   from the thing that owns the truth. Only `other` and `runtime` are hand-declared.
+4. **One authority declaration.** `sockets.authority` uses the fields of the authority extension already in
+   Telosmith#100 (`needs`, `accepts`, `grants`, `protocol`). When `a2a` is present, the card's authority extension
+   `params` must equal it. `protocol` stays `undecided (DEC-185)` and the declaration grants nothing, as in
+   `docs/integrations/authority-socket.md`.
+5. **Names agree.** `tool.version` equals `mcp.serverInfo.version` and, when present, the card's `version`.
+6. **`other` is transitional.** Folder, file and CLI sockets that aren't MCP or A2A yet (Prospero's content folder,
+   say) are listed with `kind`, `direction`, `location` and `planned` (the standard socket they will become). A
+   checker reports them as transitional, never as errors. They are free text: nothing can call them.
+7. **No secrets, no environment.** `mcp.command` is an argv list with no environment values; the manifest never
+   carries tokens, URLs with credentials or host paths.
+8. **Versioning.** `manifest` names a major version. A checker refuses a major it doesn't know. Within `/1` unknown
+   keys are errors, as in `.aec/config.json`, so adding a key ships a checker that knows it first. Removing or renaming
+   a key, or changing what one means, is `/2`. This is also the contract-version policy Kate asked for before item 6
+   (round 2): the built-in MCP tool names and shapes in `mcp.tools` become part of what a `/1` manifest promises.
+
+## Where it lives
+
+Default `.aec/manifest.json`, beside the records and the config. A repository with several tools writes
+`.aec/manifests/<tool id>.json` instead. The path becomes a config key in the build PR. Prospero's provisional file
+lives inside its package (`prospero/packet/manifest.json`); migrating it is a follow-up in that repository, not part
+of this decision.
+
+## Prospero's provisional manifest, mapped
+
+| Prospero today (`kairos.tool-manifest.provisional`) | This proposal |
+|---|---|
+| `tool`, `version`, `purpose` | `tool.id`, `tool.version`, `tool.description` |
+| `sockets.information_in` (a content folder, MCP planned) | `sockets.other` (kind folder, direction in, `planned`: MCP resource) until it is an MCP resource, then `mcp.resources` |
+| `sockets.information_out` (packets, decisions, history, review sheet) | `sockets.other` (direction out); the read-only `history` report is the likeliest first MCP tool |
+| `sockets.services`, `communication` | `mcp.tools`, `a2a` (`null` today) |
+| `sockets.know_how` | `skills` |
+| `sockets.authority` (`needs`, `grants`, `note`) | `sockets.authority` (`needs`, `accepts`, `grants`, `protocol`); the note becomes the authority extension's description |
+| `network`, `model_calls`, `dependencies` | `runtime` |
+
+DEC-177's five socket kinds (information in and out, services, communication, know-how) plus DEC-185's authority are
+all covered, but by standard rather than by kind: information and services are both MCP, communication is A2A.
+
+## Options weighed
+
+QAT: truth-weight (installed skill, 2026-10-15 upload) on A versus B, by hand against this page's evidence.
+
+| | A. The Agent Card **is** the manifest | **B. An envelope holding each standard's objects (recommended)** | C. Separate files, no envelope |
+|---|---|---|---|
+| What it is | MCP listings, skills and authority ride as A2A card extensions | the shape above | `agent-card.json`, `mcp-tools.json`, skills folder, authority file side by side |
+| Tools with no A2A endpoint | **fails**: a 1.0 card requires `supportedInterfaces` with a URL; Prospero and Telosmith today have none | `"a2a": null` | fine |
+| One place to read | yes | yes | no; the authority and runtime parts have no home |
+| Standards kept verbatim | MCP objects nested inside a card extension's `params` | yes | yes |
+| Served as-is to A2A clients | yes | no (serve `a2a.agentCard` from it) | yes |
+
+A fits the handoff's wording most literally but makes every tool pretend to be an A2A agent. C keeps the standards
+pure but leaves authority without a socket, which DEC-185 rules out. B is the recommendation; the card still exists,
+inside it, and is what gets served.
+
+## Found while writing this: MCP 2026-07-28
+
+DEC-177 names MCP spec 2026-07-28. `aec mcp` (Telosmith#95, merged) negotiates 2024-11-05 to 2025-11-25 only. Read on
+2026-11-21 from the 2026-07-28 changelog (through a summary): the `initialize` handshake and sessions are removed;
+a server MUST implement `server/discover`; list results carry `ttlMs` and `cacheScope`; results carry `resultType`;
+`ping` is removed; Roots, Sampling and Logging are deprecated. Effects:
+- On this proposal: `mcp.protocolVersions` and `mcp.capabilities` are where a 2026-07-28 server's `server/discover`
+  answer goes; `mcp.tools` stays the `tools` array (the Tool object's fields weren't listed as changed). The build
+  step must drop per-response cache fields so the file doesn't change on every run. Not verified against the schema.
+- Separately: `aec mcp` needs 2026-07-28 support before item 6 can claim compatibility with current clients. That's
+  a follow-up within item 5, not this decision.
+
+## Not decided here
+
+The authority protocol (DEC-185, DEC-197); budgets, provenance, model routing and recipes (DEC-177 left them to R&D);
+signing the manifest (DEC-178); serving it over HTTP; the build and check commands' exact flags.
+
+## Dissent review (AGENTS.md Drift: a proposed new subsystem)
+
+QAT: stress-test (installed skill, 2026-10-15 upload), by hand. Concerns 1 and 3 taken, 2 answered.
+1. *Purpose risk:* the manifest becomes a second source of truth for the MCP surface. Taken: rule 3 (generated and
+   checked), and only `other` and `runtime` are hand-written.
+2. *Evidence of need:* one tool (Prospero) has a manifest today. Counter: DEC-177 requires one for every new tool,
+   and item 6's test needs a fixed thing to test against. A schema written now from one example may misfit the second;
+   `/1` with a cheap `/2` path is the hedge.
+3. *If wrong:* a tool's declared authority is read as a grant. Taken: rule 4 repeats that it grants nothing, and the
+   checker keeps `protocol` fixed until Zach adopts one.
+4. *To decide:* option B; the location; whether `runtime` belongs in `/1` or waits for R&D (it is Kairos-specific,
+   which DEC-177 sent to R&D, but Prospero already declares it).
