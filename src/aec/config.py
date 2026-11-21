@@ -14,7 +14,8 @@ Schema version 1 (every key optional):
 
   _doc               string   free prose, ignored (JSON has no comments)
   version            1        the schema version; any other value is an error
-  records            path     the records file (default `.aec/records.jsonl`)
+  records            path     the records file (default `.aec/records.jsonl`), for the commands whose
+                              records path is optional (`records_path`, `discovered_records`)
   init.ci_name       name     `aec init --ci-name` (default `aec`)
   init.hook_style    choice   `aec init --hook-style`: `inline` or `line` (default `inline`)
 
@@ -157,6 +158,54 @@ def load(start: str | Path = ".") -> Config:
     if problems:
         raise ConfigError(f"{path}: " + "; ".join(problems))
     return Config(root, path, values)
+
+
+def own(root: str | Path) -> Config:
+    """ROOT's own config, never a parent's: for `aec init` and the commands that take a ROOT or --repo."""
+    root = Path(root)
+    return load(root) if (root / ".aec").is_dir() else Config(None, None)
+
+
+def configured_records(cfg: Config) -> Path:
+    """`records` from CFG, resolved against its root, refusing symlinks (Codex security review on #98).
+
+    The checkout controls the config and every path under the root. A committed symlink anywhere along the
+    configured path (`records -> ../.bash_profile`) would make a reading command leave the repository and an appending
+    one (`aec import-purpose`) write outside it, so no component below the root may be a symlink, and the resolved
+    path must stay inside the resolved root. Raises ConfigError naming the file."""
+    root = cfg.root if cfg.root is not None else Path.cwd()
+    rel = PurePosixPath(str(cfg.get("records")))
+    here = root
+    for part in rel.parts:
+        here = here / part
+        if here.is_symlink():
+            raise ConfigError(f"{cfg.path}: records: {rel} passes through a symlink ({here}); refused, "
+                              "a records path must stay inside the repository")
+    real_root = root.resolve()
+    if not here.resolve().is_relative_to(real_root):
+        raise ConfigError(f"{cfg.path}: records: {rel} resolves outside the repository root {real_root}; refused")
+    return here
+
+
+def records_path(explicit, root: str | Path) -> Path:
+    """The records file for a command whose path is optional (AEC-R-repo-config-precedence@2).
+
+    An explicit path wins and keeps its existing meaning (relative to the working directory); then `records` in
+    ROOT's own config, resolved against ROOT; then the unchanged default `ROOT/.aec/records.jsonl`. With an explicit
+    path the config isn't read at all. Raises ConfigError when ROOT's config exists and is invalid."""
+    if explicit:
+        return Path(explicit)
+    cfg = own(root)
+    if "records" in cfg.values:
+        return configured_records(cfg)
+    return Path(root) / ".aec" / "records.jsonl"
+
+
+def discovered_records(start: str | Path) -> Path | None:
+    """`records` from the config found by discovery from START, or None when no config sets it (the caller keeps
+    its own default). For commands that already search upward (the speckit ones). Raises ConfigError."""
+    cfg = load(start)
+    return configured_records(cfg) if "records" in cfg.values else None
 
 
 def resolve(cli_value, config: Config, key: str):

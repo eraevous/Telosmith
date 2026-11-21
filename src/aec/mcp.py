@@ -210,7 +210,8 @@ def _record_dict(r) -> dict:
 def telosmith_server(root: str | Path = ".", records: str | Path | None = None) -> McpServer:
     from .records import Store, check
     root = Path(root)
-    path = Path(records) if records else root / ".aec" / "records.jsonl"
+    from .config import records_path
+    path = records_path(records, root)  # ConfigError when ROOT's .aec/config.json is invalid
     srv = McpServer("telosmith", __version__,
                     instructions="Read-only access to this repository's Telosmith records. " + NOTICE)
 
@@ -279,8 +280,14 @@ def _sources(root: Path):
 def add_parser(sub) -> None:
     p = sub.add_parser("mcp", help="serve this repository's records over MCP (stdio, read-only)")
     p.add_argument("--root", default=".", help="repository root (default: .)")
-    p.add_argument("--records", help="records file (default: ROOT/.aec/records.jsonl)")
+    p.add_argument("--records", help="records file (default: records in ROOT/.aec/config.json, else ROOT/.aec/records.jsonl)")
 
 
 def cli(a, ap) -> int:
-    return telosmith_server(a.root, a.records).serve()
+    from .config import ConfigError
+    try:
+        server = telosmith_server(a.root, a.records)
+    except ConfigError as error:
+        print(f"aec mcp: {error}", file=sys.stderr)
+        return 1
+    return server.serve()
