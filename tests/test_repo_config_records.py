@@ -338,6 +338,66 @@ class SpeckitDiscovery(unittest.TestCase):
             (r.root / "plain" / ".git").mkdir()  # a git top with no .aec/ between it and the feature
             self.assertIsNone(config.discovered_records(nested))
 
+@unittest.skipUnless(hasattr(os, "symlink"), "needs symlinks")
+class SymlinkedRecords(unittest.TestCase):
+    """Codex security review on #98 (P1): a configured records path through a symlink must not lead outside."""
+
+    def setUp(self):
+        self.r = Repo().__enter__()
+        self.outside = self.r.root.parent / "outside-startup-file"  # absent: an appender would create it
+        try:
+            os.symlink(self.outside, self.r.root / "records-link")
+        except OSError as error:  # e.g. Windows without the privilege
+            self.r.__exit__(None, None, None)
+            self.skipTest(f"cannot create symlinks: {error}")
+        self.r.configure({"records": "records-link"})
+
+    def tearDown(self):
+        self.r.__exit__(None, None, None)
+
+    def test_import_purpose_refuses_and_writes_nothing_outside(self):
+        pdir = self.r.root / "codex_++" / "purpose_files"
+        pdir.mkdir(parents=True)
+        (pdir / "demo.purpose.md").write_text("# demo\n\n## Purpose\n\n$(touch pwned)\n", encoding="utf-8")
+        code, _, err = run(["import-purpose", str(self.r.root)])
+        self.assertEqual(code, 2)
+        self.assertIn("symlink", err)
+        self.assertFalse(self.outside.exists())
+
+    def test_reading_commands_refuse(self):
+        self.outside.write_text(rec("R-OUT", "outside") + "\n", encoding="utf-8")
+        code, _, err = run(["source", "show", "R-OUT@1", "--repo", str(self.r.root)])
+        self.assertEqual(code, 2)
+        self.assertIn("symlink", err)
+        with self.assertRaises(config.ConfigError):
+            telosmith_server(self.r.root)
+        with self.assertRaises(config.ConfigError):
+            config.discovered_records(self.r.root)
+
+    def test_symlinked_directory_along_the_path_is_refused(self):
+        outdir = self.r.root.parent / "outdir"
+        outdir.mkdir()
+        os.symlink(outdir, self.r.root / "dirlink")
+        self.r.configure({"records": "dirlink/records.jsonl"})
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.records_path(None, self.r.root)
+        self.assertIn("dirlink", str(ctx.exception))
+
+    def test_symlink_pointing_inside_is_refused_too(self):
+        os.symlink(self.r.root / "records" / "main.jsonl", self.r.root / "inner-link")
+        self.r.configure({"records": "inner-link"})
+        with self.assertRaises(config.ConfigError):
+            config.records_path(None, self.r.root)
+
+    def test_plain_configured_path_still_works_and_explicit_path_is_unchecked(self):
+        self.r.configure({"records": "records/main.jsonl"})
+        self.assertEqual(config.records_path(None, self.r.root), self.r.root / "records" / "main.jsonl")
+        self.r.configure({"records": "records-link"})
+        # an explicit path is the user's own choice on the command line, as before this PR
+        self.assertEqual(config.records_path(str(self.r.root / "records-link"), self.r.root),
+                         self.r.root / "records-link")
+
+
 def _ids(srv):
     req = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "records_list", "arguments": {}}}
     res = srv.handle(req)["result"]

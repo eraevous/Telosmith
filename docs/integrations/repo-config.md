@@ -53,6 +53,10 @@ without it behaves exactly as before: every setting has a default equal to today
   - The two rules differ on purpose: an explicit ROOT names the repository, so only its own file counts; a feature
     path names it implicitly, so discovery finds it. The order (explicit, config, default) is the same for both.
   - An invalid config is an error for these commands only when they would use it (no explicit `--records`).
+  - A configured `records` path may not pass through a symlink anywhere below the root, and must resolve inside the
+    root; otherwise it is refused as an invalid config. The checkout controls both the file and the tree, so a
+    committed link could otherwise send a read or an append outside the repository. An explicit `--records` is not
+    checked (it is the user's own choice, as before).
   - `aec check RECORDS`, `impact`, `code-impact` and `append` take RECORDS as a required argument; that is unchanged
     and the config never makes it optional (`AEC-R-repo-config-precedence@2`).
 - **Precedence:** an explicit flag, then the file, then the default. Reading never rewrites the file.
