@@ -23,6 +23,16 @@ def run(argv):
     return code, out.getvalue(), err.getvalue()
 
 
+@contextlib.contextmanager
+def chdir(path):
+    before = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(before)
+
+
 def write_skill(parent: Path, folder: str, text: str) -> Path:
     d = parent / folder
     d.mkdir(parents=True)
@@ -189,6 +199,42 @@ class Folders(unittest.TestCase):
             code, _, err = run(["skills", "new", "my-skill", "--description", "d", "--dir", t])
             self.assertEqual(code, 1, err)
             self.assertEqual(list(Path(outside).iterdir()), [])
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symlinks")
+    def test_new_refuses_a_symlinked_parent_in_a_checkout(self):
+        # Codex security P2 on afa91a8: a committed `skills -> /outside` link redirected the default write
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as outside:
+            os.symlink(outside, Path(repo) / "skills")
+            (Path(repo) / "docs").mkdir()
+            os.symlink(outside, Path(repo) / "docs" / "agent")
+            with chdir(repo):
+                for argv in (["--description", "d"], ["--description", "d", "--dir", "docs/agent/x"]):
+                    code, _, err = run(["skills", "new", "planted", *argv])
+                    self.assertEqual(code, 1, argv)
+                    self.assertIn("symlink", err)
+            self.assertEqual(list(Path(outside).iterdir()), [])
+
+    def test_new_refuses_dotdot_in_a_relative_dir(self):
+        with tempfile.TemporaryDirectory() as repo, chdir(repo):
+            code, _, err = run(["skills", "new", "a", "--description", "d", "--dir", "../escape"])
+            self.assertEqual(code, 1)
+            self.assertIn("'..'", err)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symlinks")
+    def test_new_refuses_an_absolute_dir_that_is_a_symlink(self):
+        with tempfile.TemporaryDirectory() as t, tempfile.TemporaryDirectory() as outside:
+            link = Path(t) / "link"
+            os.symlink(outside, link)
+            code, _, err = run(["skills", "new", "a", "--description", "d", "--dir", str(link)])
+            self.assertEqual(code, 1)
+            self.assertEqual(list(Path(outside).iterdir()), [])
+
+    def test_new_default_dir_in_a_plain_checkout(self):
+        # decoy: the default relative dir, no links, nested creation
+        with tempfile.TemporaryDirectory() as repo, chdir(repo):
+            code, out, err = run(["skills", "new", "a", "--description", "d"])
+            self.assertEqual(code, 0, err)
+            self.assertTrue((Path(repo) / "skills" / "a" / "SKILL.md").is_file())
 
     def test_check_a_folder_of_skills_and_exit_codes(self):
         with tempfile.TemporaryDirectory() as t:

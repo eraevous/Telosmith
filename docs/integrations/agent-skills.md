@@ -16,7 +16,10 @@ aec skills new my-skill --description "..." --dir .claude/skills --license MIT
 aec skills check skills/            # a skill folder, or a folder of skill folders; exit 0 only when all are valid
 ```
 
-`new` never overwrites and refuses a symlinked skill folder. Values are written double-quoted, so any text is safe.
+`new` never overwrites. A relative `--dir` (the default `skills`) is checked component by component from the working
+directory: a symlink anywhere in it, or `..`, is refused, so a link committed in a checkout can't redirect the write.
+An absolute `--dir` is your explicit choice: its ancestors aren't checked, but the folder itself and the skill folder
+must not be links. Values are written double-quoted, so any text is safe.
 
 ## What is checked
 

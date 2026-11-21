@@ -20,6 +20,7 @@ Not covered: running a skill, checking its scripts, or `allowed-tools` semantics
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -273,12 +274,41 @@ def new_skill(dir, name: str, description: str, **kwargs) -> Path:
     text = render_skill(name=name, description=description, body=_template_body(name), **kwargs)
     folder = Path(dir) / name
     target = folder / SKILL_FILE
-    if folder.is_symlink() or target.exists() or target.is_symlink():
+    base = _check_write_path(Path(dir), name)
+    if target.exists() or target.is_symlink():
         raise FileExistsError(f"{target} exists; not overwriting")
     folder.mkdir(parents=True, exist_ok=True)
-    with open(target, "x", encoding="utf-8") as fh:
+    _check_write_path(Path(dir), name)  # again after mkdir: nothing may have been swapped for a link
+    if not folder.resolve().is_relative_to(base):
+        raise SkillError(f"{folder} resolves outside {base}; not writing")
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(text)
     return target
+
+
+def _check_write_path(dir: Path, name: str) -> Path:
+    """Refuse a symlink in any written component, and return the directory the write must stay inside.
+
+    A relative DIR (the default `skills`) is checked component by component from the working directory,
+    so a symlink committed in a checkout can't redirect the write; the result must stay inside the working
+    directory. An absolute DIR is the caller's explicit choice: its ancestors aren't checked (system paths
+    such as /tmp may be links), but DIR itself and NAME must not be links.
+    """
+    if dir.is_absolute():
+        base, parts = dir, [name]
+        if dir.is_symlink():
+            raise SkillError(f"{dir} is a symlink; not writing through it")
+    else:
+        base, parts = Path.cwd(), [*dir.parts, name]
+        if ".." in dir.parts:
+            raise SkillError(f"{dir}: '..' is not allowed in a relative --dir (give an absolute path)")
+    current = base
+    for part in parts:
+        current = current / part
+        if current.is_symlink():
+            raise SkillError(f"{current} is a symlink; not writing through it")
+    return base.resolve()
 
 
 # --- CLI ---------------------------------------------------------------------------------------------
@@ -300,7 +330,7 @@ def cli(a, ap) -> int:
     if a.skills_cmd == "new":
         try:
             target = new_skill(a.dir, a.name, a.description, license=a.license, compatibility=a.compatibility)
-        except SkillError as exc:
+        except SkillError as exc:  # invalid values, or a symlinked or escaping destination
             print(f"skills new: {exc}", file=sys.stderr)
             return 1
         except OSError as exc:
