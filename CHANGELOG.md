@@ -11,6 +11,10 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   `aec snippets check` exits 1 when a committed copy under `.aec/snippets/` differs from a fresh render.
 - `init.snippet_files` (default `true`, so `aec init` is unchanged): `false` writes no `.aec/snippets/` copies.
   See `docs/integrations/snippets.md`.
+### Proposed (AEC-D-manifest-schema@2, DEC-256 item 7; not accepted, no code)
+- `docs/integrations/manifest.md`: a tool manifest schema, `telosmith.manifest/1.0`, as an envelope holding the MCP
+  listings, the A2A Agent Card (or `null`), Agent Skills folders, the authority declaration and runtime facts.
+  Example: `examples/manifest/telosmith.manifest.json`.
 
 ### Changed (AEC-R-repo-config-impl@2, DEC-256 item 1, second slice)
 - `records` in `.aec/config.json` is now read by the commands whose records path is optional: `aec source show|search`,
