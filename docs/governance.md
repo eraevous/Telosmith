@@ -1,7 +1,7 @@
 # How AEC governs itself
 
 AEC is designed and owned by Zach Rhodes and built with AI agents (Claude, Codex and ChatGPT)
-working from written handoffs. "Kate" in these documents is the maintainer's name for ChatGPT, which serves as an independent reviewer. It is developed with Spec Kit (`specs/`) and governs itself with
+working from written handoffs. ChatGPT (Kate) serves as an independent reviewer from a different model family: "Kate" in these documents is the maintainer's name for that ChatGPT thread, and "API Kate" is a reviewer called through the ChatGPT API, without that thread's memory. It is developed with Spec Kit (`specs/`) and governs itself with
 its own records (`.aec/records.jsonl`), which makes the project its own longest-running test case.
 What is public and what isn't: the specs, records, PR descriptions and evaluation write-ups here
 are public. The coordination handoffs and the owner's decision log are kept in a private
@@ -12,7 +12,8 @@ maintainer's word.
 ## Which source governs which question
 
 `.aec/records.jsonl` governs purpose and authority (`AEC-P0@1`, `AU-zach@1`).
-The engineering principles live in `.specify/memory/constitution.md`, applied by
+The engineering principles live in the governance charter, `.specify/memory/constitution.md` (Spec Kit
+calls it the constitution), applied by
 `CHARTER.md`; `AGENTS.md` governs agent behavior. When a project uses Spec Kit,
 Spec Kit owns its specification workflow. Purpose files in `codex_++/purpose_files/` are semantic contracts whose
 claims are candidates, and `codex_++/intents/` contains provisional reasoning.
