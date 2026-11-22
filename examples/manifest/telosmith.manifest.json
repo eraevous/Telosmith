@@ -1,6 +1,6 @@
 {
   "manifest": "telosmith.manifest/1.0",
-  "_doc": "EXAMPLE for the proposal in docs/integrations/manifest.md (AEC-D-manifest-schema@1, proposed, not accepted). The mcp section was produced by running `aec mcp` on 2026-11-21 (tools/list verbatim); the rest was written by hand because `aec manifest build` doesn't exist yet.",
+  "_doc": "EXAMPLE for the proposal in docs/integrations/manifest.md (AEC-D-manifest-schema@3, accepted). The mcp section was produced by running `aec mcp` on 2026-11-21 (tools/list verbatim); the rest was written by hand because `aec manifest build` doesn't exist yet.",
   "tool": {
     "id": "telosmith",
     "name": "Telosmith",
@@ -105,8 +105,7 @@
     "other": []
   },
   "runtime": {
-    "network": false,
-    "model_calls": false,
-    "dependencies": "Python standard library only"
+    "network": "never",
+    "model_calls": "never"
   }
 }
