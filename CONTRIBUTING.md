@@ -33,7 +33,8 @@ extension test skips unless the pinned Spec Kit CLI (v1.2.3) is installed.
 
 ## The rules that matter most
 
-These come from the project's [constitution](.specify/memory/constitution.md) and
+These come from the project's governance charter ([constitution](.specify/memory/constitution.md), in Spec Kit's
+term) and
 [charter](CHARTER.md). A pull request that breaks one will be asked to change.
 
 1. **Standard library only, deterministic output.** The same input gives byte-identical

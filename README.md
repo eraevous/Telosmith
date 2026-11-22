@@ -6,6 +6,10 @@
 folder keep working. Since v0.5 the same command is also installed as `telosmith`; the examples use `aec`,
 which every release has and which stays the primary name.*
 
+In standard terms it does **requirements traceability with drift detection**: when the code or record
+under a trace link changes, the link becomes what systems engineering calls a *suspect link*, and
+Telosmith marks it `stale`. The reasons drift, not the data.
+
 It reports structure, not truth: "this conclusion's recorded support changed", never "this
 conclusion is false". It is a standard-library Python command-line tool that never edits your code
 or your specs, and it works in three settings: as a [Spec Kit](https://github.com/github/spec-kit)
@@ -93,7 +97,7 @@ Each conclusion that relied on something that changed gets a review disposition,
 
 | Disposition | Meaning |
 |---|---|
-| `stale` | the code or record it rests on changed without an authorized revision: look again |
+| `stale` | the code or record it rests on changed without an authorized revision (a suspect link): look again |
 | `needs_review` | it sits downstream of something stale, broken or contested, or it is a decision whose basis changed |
 | `unjustified` | a claim's explicit support broke (for example, code it depends on was deleted) |
 | `weakened` | it lost one support but keeps others |
@@ -118,8 +122,8 @@ what to look for wrote the requirement down, so it demonstrates the mechanism, n
 
 ## Evidence and limitations
 
-- **Not shown to improve outcomes.** In the first measured test,
-  [probe-001](docs/evaluations/probe-001-results.md), Claude Sonnet 5.5 agents found every hidden
+- **Not shown to improve outcomes.** In the first measured test, an eval
+  called [probe-001](docs/evaluations/probe-001-results.md), Claude Sonnet 5.5 agents found every hidden
   dependant on their own on three dependency-sensitive tasks (18 of 18 trials succeeded in every
   condition). Telosmith's structural briefing changed no outcome and raised token use on two of the three
   tasks. It was a small, exploratory pilot. It also exposed a gap in Telosmith's caller resolution.
