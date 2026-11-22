@@ -88,6 +88,9 @@ def check(root: str | Path, ref: str | None = None, hook_style: str | None = Non
     ok, bad = [], []
     for path in sorted(folder.iterdir()):
         rel = (SNIPPETS_DIR / path.name).as_posix()
+        if path.is_symlink() or not path.is_file():
+            bad.append(f"{rel}: not a regular file; not read")
+            continue
         if path.name == HOOK_FILE:
             which = "hook"
         elif path.name.endswith("-ci.yml") and CI_NAME.fullmatch(path.name[:-len("-ci.yml")]):
@@ -98,9 +101,6 @@ def check(root: str | Path, ref: str | None = None, hook_style: str | None = Non
                 continue
         else:
             ok.append(f"{rel}: not a Telosmith snippet; not checked")
-            continue
-        if path.is_symlink() or not path.is_file():
-            bad.append(f"{rel}: not a regular file; not read")
             continue
         try:
             text = path.read_text(encoding="utf-8")
