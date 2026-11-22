@@ -64,7 +64,7 @@ The exact keys come with the item-1 PR and the semantic maintainer's records, no
 
 ## Order of work (one PR each, from main, no stacking)
 
-1. **Config** (`.aec/config.json` loader, defaults, `aec config show`). Decided; Kate's records first.
+1. **Config** (`.aec/config.json` loader, defaults, `aec config show`). Decided; the records from ChatGPT (Kate) first.
 2. **`aec hook`** as a command: already built as `aec hook project` in Telosmith#92 (ready, waiting on Zach). Reading
    strictness from the config waits for #92's merge (no stacking).
 3. **`aec agents`**: renders the shared governance part of AGENTS.md between markers, with a glossary pointer (DEC-255);
@@ -84,7 +84,7 @@ The exact keys come with the item-1 PR and the semantic maintainer's records, no
 
 ## Dissent review (AGENTS.md Drift: a new subsystem and a module's responsibility change)
 
-1. **Which purpose or assumption might this violate?** `AEC-P0` and the constitution keep Telosmith standard-library
+1. **Which purpose or assumption might this violate?** `AEC-P0` and the constitution (the governance charter) keep Telosmith standard-library
    only and Python 3.10+. A TOML config strains that (3.10 can't read it). Separately, the handoff's own warning: Zach
    rejected "declares and checks contracts" as the point; the point is the connection. Part A first risks spending the
    effort on machinery (AGENTS.md Drift trigger) before the outcome Zach named.
