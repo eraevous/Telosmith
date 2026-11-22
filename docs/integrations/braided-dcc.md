@@ -4,7 +4,7 @@ Author: claude:aec#wake-20261117-19 · Reviewer: Kate (API instance, gpt-6.1-sol
 
 Status: **proposed** (`AEC-D-braided-dcc@1`, `epistemic: provisional`). Nothing here is adopted until Zach accepts it.
 Rollout was approved live on 2026-11-17 ("Review it, then roll it. We'll figure it out, live, and learn from the
-ordeal", Zach, quoted by the coordinator in the handoff); this page is what the rollout follows and what it learns against.
+ordeal", Zach, quoted by the orchestrator (coordinator) in the handoff); this page is what the rollout follows and what it learns against.
 
 ## 1. What the method is
 
@@ -15,8 +15,8 @@ so no one actor writes both channels and then grades them:
 
 | Role | Default actor | Inputs | Outputs |
 |---|---|---|---|
-| **Implementer** | the repo's lane (`claude:<lane>`) | the handoff, the semantic records as they stand | code, tests, `implemented_by`/`evidence` links, a PR |
-| **Semantic maintainer** | the lane's paired Kate (`chatgpt:kate…`), a different model family; fallback Research or a fresh-context Claude session | the handoff's intent, the PR diff, the current `.aec/` records | new or versioned purpose / requirement / decision records with `authored_by` + `author_role: independent`; a drift note (below) |
+| **Implementer** | the repo's lane (an agent, `claude:<lane>`) | the handoff, the semantic records as they stand | code, tests, `implemented_by`/`evidence` links, a PR |
+| **Semantic maintainer** | the lane's paired ChatGPT (Kate) reviewer (`chatgpt:kate…`), a different model family; fallback Research or a fresh-context Claude session | the handoff's intent, the PR diff, the current `.aec/` records | new or versioned purpose / requirement / decision records with `authored_by` + `author_role: independent`; a drift note (below) |
 | **Reviewer** | Codex (Copilot findings still get a Codex re-review, lane-rules §2) | the PR, both channels | review findings on the code **and** on whether the records match it |
 
 The owner (Zach) stays the only actor who accepts a decision (`author_role: owner` when he writes a record himself).

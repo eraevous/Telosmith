@@ -8,7 +8,7 @@ The existing extension ([spec-kit.md](spec-kit.md)) runs one direction only: it 
 
 Derivation conflicts with two committed texts:
 
-- constitution Principle I: "AEC MUST NOT rewrite specs", and specs "reference" records and "do not restate them";
+- constitution (Spec Kit's governance charter) Principle I: "AEC MUST NOT rewrite specs", and specs "reference" records and "do not restate them";
 - `AEC-R1@1`: "Never create a competing authority: Spec Kit owns workflow".
 
 DEC-194 is newer and comes from the same authority, but neither text has been amended. Proposed reconciliation, for Zach to accept or reject:

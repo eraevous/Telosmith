@@ -11,7 +11,7 @@ Use cases for Telosmith are also required."* For the setup without Spec Kit, see
 
 **No use case below has outcome evidence.** The evidence that exists points the other way, or is null:
 
-- [probe-001](evaluations/probe-001-results.md): agents found hidden dependants without Telosmith (18 trials, 6/6
+- [probe-001](evaluations/probe-001-results.md), the first eval: agents found hidden dependants without Telosmith (18 trials, 6/6
   in every condition), and briefings raised token use on 2 of 3 tasks.
 - fathom-002 (run 2026-11-04; materials in the private relay-kit repository, see
   [governance.md](governance.md)): a first build with Spec Kit and Telosmith scored 39 against 44 and 45 for

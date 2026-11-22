@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from aec.mcp import SUPPORTED, McpServer, ToolError, telosmith_server  # noqa: E402
+from aec.mcp import STATELESS, SUPPORTED, McpServer, ToolError, telosmith_server  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 RECORDS = [
@@ -259,6 +259,121 @@ class TestTelosmithTools(unittest.TestCase):
         self.assertEqual(sorted((p, p.stat().st_mtime_ns) for p in self.root.rglob("*")), before)
 
 
+V26 = "2026-07-28"
+
+
+def modern(srv, method, params=None, version=V26, rid=1, **meta):
+    """A 2026-07-28 request: the revision (and client facts) ride in params._meta on every request."""
+    params = dict(params or {})
+    params["_meta"] = {"io.modelcontextprotocol/protocolVersion": version,
+                       "io.modelcontextprotocol/clientCapabilities": {}, **meta}
+    return call(srv, method, params, rid)
+
+
+class TestStatelessProtocol(unittest.TestCase):
+    """MCP 2026-07-28 (SEP-2575): no handshake; each request carries its revision; the old era keeps working."""
+
+    def setUp(self):
+        self.srv = McpServer("demo", "0.0.1", instructions="use echo")
+
+        @self.srv.tool("echo", "echo back", {"type": "object", "properties": {"x": {"type": "string"}}})
+        def echo(a):
+            return {"x": a.get("x")}
+
+        @self.srv.tool("refuse", "always refuses")
+        def refuse(a):
+            raise ToolError("refused: no")
+
+    def assert_complete(self, r):
+        self.assertNotIn("error", r)
+        self.assertEqual(r["result"]["resultType"], "complete")
+        self.assertEqual(r["result"]["_meta"]["io.modelcontextprotocol/serverInfo"], {"name": "demo", "version": "0.0.1"})
+
+    def test_discover_without_a_handshake(self):
+        r = modern(self.srv, "server/discover")
+        self.assert_complete(r)
+        self.assertEqual(r["result"]["supportedVersions"], STATELESS)
+        self.assertIn("tools", r["result"]["capabilities"])
+        self.assertEqual(r["result"]["instructions"], "use echo")
+        self.assertNotIn("serverInfo", r["result"])  # moved to _meta after SEP-2575 became final (#3002)
+        self.assertEqual((r["result"]["ttlMs"], r["result"]["cacheScope"]), (0, "public"))  # Codex P2 on fee9a3b
+        self.assertEqual(modern(McpServer("x", "1", cache_scope="private"), "server/discover")["result"]["cacheScope"],
+                         "private")
+        self.assertIsNone(self.srv.protocol)  # nothing kept between requests
+
+    def test_tools_list_carries_cache_policy(self):
+        r = modern(self.srv, "tools/list")
+        self.assert_complete(r)
+        self.assertEqual([t["name"] for t in r["result"]["tools"]], ["echo", "refuse"])
+        self.assertEqual((r["result"]["ttlMs"], r["result"]["cacheScope"]), (0, "public"))
+        srv = McpServer("x", "1", list_ttl_ms=60000, cache_scope="private")
+        r = modern(srv, "tools/list")["result"]
+        self.assertEqual((r["ttlMs"], r["cacheScope"]), (60000, "private"))
+        for bad in ({"list_ttl_ms": -1}, {"list_ttl_ms": True}, {"list_ttl_ms": 1.5}, {"cache_scope": "shared"}):
+            with self.assertRaises(ValueError):
+                McpServer("x", "1", **bad)
+
+    def test_tools_call_ok_and_tool_error(self):
+        r = modern(self.srv, "tools/call", {"name": "echo", "arguments": {"x": "hi"}})
+        self.assert_complete(r)
+        self.assertEqual(r["result"]["structuredContent"], {"x": "hi"})
+        r = modern(self.srv, "tools/call", {"name": "refuse"})
+        self.assert_complete(r)
+        self.assertTrue(r["result"]["isError"])
+        r = modern(self.srv, "tools/call", {"name": "echo", "arguments": {"x": 3}})  # schema check unchanged
+        self.assertTrue(r["result"]["isError"])
+        self.assertEqual(modern(self.srv, "tools/call", {"name": "nope"})["error"]["code"], -32602)
+
+    def test_unsupported_revision_is_32022_with_supported_and_requested(self):
+        for v in ("2099-01-01", "2025-11-25"):  # a handshake-era revision is not a per-request one
+            r = modern(self.srv, "tools/list", version=v)
+            self.assertEqual(r["error"]["code"], -32022)
+            self.assertEqual(r["error"]["data"], {"supported": STATELESS, "requested": v})
+
+    def test_malformed_meta_is_invalid_params(self):
+        for meta in ({"io.modelcontextprotocol/protocolVersion": 20260728},
+                     {"io.modelcontextprotocol/protocolVersion": None},
+                     {"io.modelcontextprotocol/protocolVersion": V26, "io.modelcontextprotocol/clientCapabilities": []}):
+            r = call(self.srv, "tools/list", {"_meta": meta})
+            self.assertEqual(r["error"]["code"], -32602, meta)
+
+    def test_ping_and_initialize_are_gone_in_this_revision(self):
+        for m in ("ping", "initialize", "resources/list"):
+            self.assertEqual(modern(self.srv, m)["error"]["code"], -32601, m)
+
+    def test_discover_without_a_revision_is_invalid_params(self):
+        self.assertEqual(call(self.srv, "server/discover")["error"]["code"], -32602)
+        self.assertEqual(call(self.srv, "server/discover", {"_meta": {"progressToken": 1}})["error"]["code"], -32602)
+
+    def test_both_eras_on_one_server(self):  # decoy: an old client, other _meta keys, is untouched
+        old = call(self.srv, "tools/list", {"_meta": {"progressToken": 7}})["result"]
+        self.assertEqual(set(old), {"tools"})
+        self.assertEqual(call(self.srv, "initialize", {"protocolVersion": "2025-11-25"})["result"]["protocolVersion"], "2025-11-25")
+        self.assertEqual(call(self.srv, "ping")["result"], {})
+        self.assert_complete(modern(self.srv, "tools/list"))
+        self.assertEqual(self.srv.protocol, "2025-11-25")  # the handshake's record is not changed by a stateless call
+
+    def test_era_is_chosen_per_request_whatever_the_order(self):  # Kate's AEC-R-mcp-era-routing@1
+        reqs = [("legacy", lambda: call(self.srv, "tools/list")),
+                ("v26", lambda: modern(self.srv, "tools/list")),
+                ("bad", lambda: modern(self.srv, "tools/list", version="2099-01-01")),
+                ("ping", lambda: call(self.srv, "ping"))]
+        import itertools
+        baseline = {k: f() for k, f in reqs}
+        for order in itertools.permutations(reqs):
+            srv_answers = {k: f() for k, f in order}
+            self.assertEqual(srv_answers, baseline, [k for k, _ in order])
+        self.assertEqual(set(baseline["legacy"]["result"]), {"tools"})
+        self.assertEqual(baseline["bad"]["error"]["code"], -32022)
+        self.assertEqual(baseline["ping"]["result"], {})
+
+    def test_record_tools_over_the_new_revision(self):
+        srv = telosmith_server(ROOT)
+        r = modern(srv, "tools/call", {"name": "record_get", "arguments": {"ref": "AEC-P0"}})
+        self.assertEqual(r["result"]["resultType"], "complete")
+        self.assertEqual(r["result"]["structuredContent"]["record"]["id"], "AEC-P0")
+
+
 class TestStdioEndToEnd(unittest.TestCase):
     """`python -m aec mcp` as a client would start it: a handshake, then a tool call, over pipes."""
 
@@ -274,6 +389,43 @@ class TestStdioEndToEnd(unittest.TestCase):
         replies = [json.loads(x) for x in p.stdout.splitlines()]
         self.assertEqual([r["id"] for r in replies], [1, 2])
         self.assertEqual(replies[0]["result"]["serverInfo"]["name"], "telosmith")
+        self.assertEqual(replies[1]["result"]["structuredContent"]["record"]["id"], "AEC-P0")
+
+    def test_stateless_errors_over_stdio_and_the_session_goes_on(self):  # Kate's AEC-R-mcp-stateless-errors@1
+        def m(rid, method, version, caps=None):
+            meta = {"io.modelcontextprotocol/protocolVersion": version}
+            if caps is not None:
+                meta["io.modelcontextprotocol/clientCapabilities"] = caps
+            return {"jsonrpc": "2.0", "id": rid, "method": method, "params": {"_meta": meta}}
+        cases = [(m(1, "tools/list", "2099-01-01"), -32022), (m(2, "tools/list", 7), -32602),
+                 (m(3, "tools/list", V26, caps=[]), -32602), (m(4, "ping", V26), -32601),
+                 (m(5, "initialize", V26), -32601), (m(6, "nope/nothing", V26), -32601), (m(7, "tools/list", V26), None)]
+        env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+        p = subprocess.run([sys.executable, "-m", "aec", "mcp", "--root", str(ROOT)],
+                           input="".join(json.dumps(c) + "\n" for c, _ in cases),
+                           capture_output=True, text=True, env=env, cwd=ROOT, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        replies = [json.loads(x) for x in p.stdout.splitlines()]
+        self.assertEqual([r["id"] for r in replies], list(range(1, 8)))
+        for r, (_, code) in zip(replies, cases, strict=True):
+            self.assertEqual(r.get("error", {}).get("code"), code, r)
+        self.assertEqual(replies[0]["error"]["data"], {"supported": STATELESS, "requested": "2099-01-01"})
+        self.assertEqual(replies[-1]["result"]["resultType"], "complete")
+
+    def test_stateless_discover_and_call_over_stdio(self):  # MCP 2026-07-28: no handshake, revision on each request
+        meta = {"io.modelcontextprotocol/protocolVersion": V26, "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "0"}}
+        msgs = [{"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": meta}},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                 "params": {"name": "record_get", "arguments": {"ref": "AEC-P0"}, "_meta": meta}}]
+        env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+        p = subprocess.run([sys.executable, "-m", "aec", "mcp", "--root", str(ROOT)], input="".join(json.dumps(m) + "\n" for m in msgs),
+                           capture_output=True, text=True, env=env, cwd=ROOT, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        replies = [json.loads(x) for x in p.stdout.splitlines()]
+        self.assertEqual([r["id"] for r in replies], [1, 2])
+        self.assertEqual(replies[0]["result"]["supportedVersions"], STATELESS)
+        self.assertEqual(replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "telosmith")
         self.assertEqual(replies[1]["result"]["structuredContent"]["record"]["id"], "AEC-P0")
 
 

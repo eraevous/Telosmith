@@ -1,7 +1,8 @@
 # Getting started
 
-This guide takes you from nothing to a `stale` report on your own code, then covers the extra steps for
-repositories that already have Codex++ purpose files. For what the results mean, see the
+This guide takes you from nothing to a `stale` report on your own code (a *suspect link*, in requirements-traceability
+terms: a record whose code changed under it), then covers the extra steps for repositories that already have
+Codex++ purpose files. For what the results mean, see the
 [README](../../README.md#what-the-results-mean).
 
 ## Install
