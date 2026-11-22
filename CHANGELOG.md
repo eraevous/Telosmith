@@ -5,9 +5,10 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
-### Proposed (AEC-D-manifest-schema@2, DEC-256 item 7; not accepted, no code)
+### Decided (AEC-D-manifest-schema@3, DEC-256 item 7; accepted by Zach 2026-11-22, no code yet)
 - `docs/integrations/manifest.md`: a tool manifest schema, `telosmith.manifest/1.0`, as an envelope holding the MCP
   listings, the A2A Agent Card (or `null`), Agent Skills folders, the authority declaration and runtime facts.
+  `runtime` holds `network` and `model_calls` (never, optional, required, unknown); no dependency list.
   Example: `examples/manifest/telosmith.manifest.json`.
 
 ### Changed (AEC-R-repo-config-impl@2, DEC-256 item 1, second slice)
