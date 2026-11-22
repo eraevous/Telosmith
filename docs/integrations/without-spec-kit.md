@@ -254,7 +254,7 @@ After editing code, run:
 
 Reading the output:
 - `[ERROR] code-reference ...`: a record points at a name that no longer exists (renamed/moved). Tell the user; do not re-point it yourself unless asked.
-- `[stale] ID@N` / `[needs_review] ID@N` / `[unjustified] ID@N`: your change touched code or records this conclusion rests on. Re-read its text, decide whether it still holds after your change, and say which in your summary ("R-1@1 re-checked: still holds because ..."). The tool does not know whether it holds.
+- `[stale] ID@N` / `[needs_review] ID@N` / `[unjustified] ID@N`: your change touched code or records this conclusion rests on (a *suspect link*, in traceability terms). Re-read its text, decide whether it still holds after your change, and say which in your summary ("R-1@1 re-checked: still holds because ..."). The tool does not know whether it holds.
 - `[finding] structural: X reaches changed Y ... candidate for attention: ID@N`: something one call away changed. Look; you are not obliged to act.
 - `[finding] structural: ID@N references superseded ID@M; ID@K changed ...`: a record still points at an older version of something that changed. Tell the user; re-point it only if asked.
 - `[note] reach depth 1; N changed symbols at depth 2 not reported`: a change sits two calls from linked code. Rerun with `--reach-depth 2` to see it.
@@ -269,7 +269,7 @@ edit (the stale report above).
 
 **What is not verified:** whether Claude, Cursor or Copilot agents follow this text, how often, or whether it
 changes what they report. That is exactly what the
-[evaluation draft](../evaluations/eval-design-framework-comparison.md) measures. probe-001 is a caution here:
+[evaluation draft](../evaluations/eval-design-framework-comparison.md) measures. probe-001 (the first eval) is a caution here:
 agents mentioned a briefing in every report that had one, which is not the same as using it.
 
 ## What Spec Kit adds, and what is lost without it

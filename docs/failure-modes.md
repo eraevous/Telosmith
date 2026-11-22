@@ -1,6 +1,6 @@
 # Failure modes AEC is evaluated against
 
-**Status: evaluation design, written before WP1–WP5 (Kate, AEC coordination round 1: "design its evaluation criteria during WP0").** This catalogue is the backbone of the WP5 evaluation. A mechanism counts as useful only if it detects or prevents a row's failure better than ordinary tests plus Spec Kit, at an acceptable cost. Sources: Kate's failure-mode table in the coordination thread (which drew on Wasowski, "Brownfield Spec and Preservation Contract", Medium, Oct 2026, as an inventory of problems rather than a prescription), Zach's additions (race conditions, protocol handoffs, desync), and AEC's own history.
+**Status: evaluation design, written before WP1–WP5 (ChatGPT (Kate), AEC coordination round 1: "design its evaluation criteria during WP0").** This catalogue is the backbone of the WP5 evaluation. A mechanism counts as useful only if it detects or prevents a row's failure better than ordinary tests plus Spec Kit, at an acceptable cost. Sources: Kate's failure-mode table in the coordination thread (which drew on Wasowski, "Brownfield Spec and Preservation Contract", Medium, Oct 2026, as an inventory of problems rather than a prescription), Zach's additions (race conditions, protocol handoffs, desync), and AEC's own history.
 
 For each row, the evaluation records the following (columns 1–6 are filled per fixture when it is built):
 1. The failure mechanism and the condition under which it occurs.
@@ -50,7 +50,7 @@ A special case is often not rare: it is ordinary conditions lining up badly. Rar
 | **Relation to the model** | anticipated and represented; representable but unanticipated; not representable (model-breaking: the concept is missing) |
 
 **Examples from AEC's own history:**
-- **The handoff ID collision (Oct 29).** Composition: two lanes each created a valid ID, and together they collided. It was also model-breaking, because the IDs had no concept of a namespace.
+- **The handoff ID collision (Oct 29).** Composition: two lanes (agents) each created a valid ID, and together they collided. It was also model-breaking, because the IDs had no concept of a namespace.
 - **Data Guide's aggregate rows.** A missing category: "one row per country" didn't hold. It counts as model-breaking only where the data model had no notion of row type.
 - **The WP0 deletion over-propagation.** Conflict: the vocabulary invariant and the code disagreed. Fixed in PR #21.
 
