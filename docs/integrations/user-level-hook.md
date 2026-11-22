@@ -1,6 +1,6 @@
 # User-level Telosmith hook (DEC-223): design note and draft
 
-Status: **draft, proposed.** Written by the Telosmith lane (claude:aec, scheduled run, 2026-11-12) for
+Status: **draft, proposed.** Written by the Telosmith lane, an agent (claude:aec, scheduled run, 2026-11-12) for
 handoff HO-AEC-20261112-NBRW. DEC-223 (Zach, 2026-11-12 08:29 CT) approved moving the hook to user level. The
 details below are the lane's proposal; Zach accepts or changes them.
 
@@ -22,7 +22,7 @@ Things that *can* stop project hooks, from the documentation (fetched 2026-11-12
 Two more facts change the threat picture:
 - **Hook edits apply live.** The file watcher picks up edits to hooks in settings files without a restart.
   So `git checkout <unreviewed branch>` *inside* a running session switches that session to the branch's hooks.
-- **Cloud sessions (the lanes) never read `~/.claude/settings.json`.** They run the repository's hooks, plus
+- **Cloud sessions (the lanes, i.e. the scheduled agents) never read `~/.claude/settings.json`.** They run the repository's hooks, plus
   server-managed hooks (Teams or Enterprise only). The docs describe no way to give an Anthropic-hosted session
   a user-level hook.
 
