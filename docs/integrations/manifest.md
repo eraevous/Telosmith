@@ -1,10 +1,12 @@
-# Tool manifest: proposed schema (Agent Card plus MCP listings)
+# Tool manifest schema (Agent Card plus MCP listings)
 
 Author: claude:aec#wake-20261121-21 · Reviewer: none yet (Codex on open; Kate asked for the records) · model=claude-opus-5-5
 
-Status: **proposed, not accepted** (`AEC-D-manifest-schema@2`; Kate's round-9 records `AEC-R-manifest-*`, `independent`). DEC-256 item 7, handoff HO-AEC-20261119-V8FC. DEC-177
-says every new tool ships a manifest declaring its sockets and leaves the schema to R&D; DEC-256 asks for a proposal
-"as Agent Card plus MCP listings". Zach accepts or changes it. No code ships with this page.
+Status: **decided** (`AEC-D-manifest-schema@3`, accepted). Zach, on Telosmith#103, 2026-11-22T20:41:53Z (comment
+7085475083): "Option B is good. The path proposed is acceptable. put network use and model use in v1, with room for
+never, optional, required, and unknown. leave dependency lists to the tool's existing package files rather than
+maintaining a second list." Kate's round-9 records `AEC-R-manifest-*` (`independent`) still apply. DEC-256 item 7,
+handoff HO-AEC-20261119-V8FC. No code ships with this page; `aec manifest build|check` come in a later PR.
 
 ## What it is for
 
@@ -31,7 +33,7 @@ One JSON file per tool, `telosmith.manifest/1.0`. Worked example: [`examples/man
     "authority": {"needs": [], "accepts": [], "grants": [], "protocol": "undecided (DEC-185)"},
     "other":     [{"id": "...", "kind": "...", "direction": "in|out", "location": "...", "planned": "..."}]
   },
-  "runtime": {"network": false, "model_calls": false, "dependencies": "..."}
+  "runtime": {"network": "never", "model_calls": "never"}
 }
 ```
 
@@ -74,6 +76,12 @@ One JSON file per tool, `telosmith.manifest/1.0`. Worked example: [`examples/man
    means, is a new major. This is also the contract-version policy Kate asked for before item 6
    (round 2): the built-in MCP tool names and shapes in `mcp.tools` become part of what a `/1` manifest promises.
 
+9. **Runtime (decided).** `runtime` has exactly two keys, `network` and `model_calls`, each one of `never`,
+   `optional`, `required` or `unknown`: whether the tool reaches the network, and whether it calls a language model,
+   never, only when the caller turns it on, always, or not established. `unknown` is an honest answer, not a default
+   to hide behind; a checker accepts it and lists it. There is no dependency list: the tool's own package files
+   (`pyproject.toml`, `package.json` and the like) are the single source, so the manifest can't disagree with them.
+
 ## Where it lives
 
 Default `.aec/manifest.json`, beside the records and the config. A repository with several tools writes
@@ -91,7 +99,8 @@ of this decision.
 | `sockets.services`, `communication` | `mcp.tools`, `a2a` (`null` today) |
 | `sockets.know_how` | `skills` |
 | `sockets.authority` (`needs`, `grants`, `note`) | `sockets.authority` (`needs`, `accepts`, `grants`, `protocol`); the note becomes the authority extension's description |
-| `network`, `model_calls`, `dependencies` | `runtime` |
+| `network`, `model_calls` (booleans) | `runtime.network`, `runtime.model_calls` (`never` for `false`) |
+| `dependencies` | dropped: the tool's own package files (`pyproject.toml` and the like) are the list |
 
 DEC-177's five socket kinds (information in and out, services, communication, know-how) plus DEC-185's authority are
 all covered, but by standard rather than by kind: information and services are both MCP, communication is A2A.
@@ -114,7 +123,8 @@ inside it, and is what gets served.
 
 ## Found while writing this: MCP 2026-07-28
 
-DEC-177 names MCP spec 2026-07-28. `aec mcp` (Telosmith#95, merged) negotiates 2024-11-05 to 2025-11-25 only. Read on
+DEC-177 names MCP spec 2026-07-28. When this page was written, `aec mcp` (Telosmith#95) negotiated 2024-11-05 to
+2025-11-25 only; Telosmith#104 (merged 2026-11-22) adds 2026-07-28 beside them. Read on
 2026-11-21 from the 2026-07-28 changelog (through a summary): the `initialize` handshake and sessions are removed;
 a server MUST implement `server/discover`; list results carry `ttlMs` and `cacheScope`; results carry `resultType`;
 `ping` is removed; Roots, Sampling and Logging are deprecated. Effects:
@@ -141,5 +151,5 @@ QAT: stress-test (installed skill, 2026-10-15 upload), by hand. Concerns 1 and 3
    `/1` with a cheap `/2` path is the hedge.
 3. *If wrong:* a tool's declared authority is read as a grant. Taken: rule 4 repeats that it grants nothing, and the
    checker keeps `protocol` fixed until Zach adopts one.
-4. *To decide:* option B; the location; whether `runtime` belongs in `/1` or waits for R&D (it is Kairos-specific,
-   which DEC-177 sent to R&D, but Prospero already declares it).
+4. *Decided by Zach (2026-11-22):* option B; the location; `runtime` in `/1` as network and model use only, no
+   dependency list.
