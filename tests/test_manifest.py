@@ -342,13 +342,20 @@ class CollectionSafety(unittest.TestCase):  # MAN-06, validation half
         for mutate in (lambda m: m["sockets"].__setitem__("other", [{"id": "x", "kind": "folder", "direction": "in",
                                                                      "location": "x", "planned": "API_TOKEN=abc123"}]),
                        lambda m: m.__setitem__("manifest", "API_TOKEN=abc123"),
-                       lambda m: m.__setitem__("manifest", "x(DB_PASSWORD=abc123)")):
+                       lambda m: m.__setitem__("manifest", "x(DB_PASSWORD=abc123)"),
+                       # quoted values (Codex P2 on b4ef850): both quote styles, and an unterminated quote
+                       lambda m: m["sockets"].__setitem__("other", [{"id": "x", "kind": "folder", "direction": "in",
+                                                                     "location": "x", "planned": 'API_TOKEN="abc123"'}]),
+                       lambda m: m["sockets"].__setitem__("other", [{"id": "x", "kind": "folder", "direction": "in",
+                                                                     "location": "x", "planned": "API_TOKEN='abc123'"}]),
+                       lambda m: m.__setitem__("manifest", 'API_TOKEN="abc123'),
+                       lambda m: m.__setitem__("manifest", "API_TOKEN='abc 123'")):
             with self.subTest(mutate=mutate):
                 m = base()
                 mutate(m)
                 code, out, err = self._cli(m)
                 self.assertEqual(code, 1)
-                self.assertNotIn("bc123", out + err)
+                self.assertNotIn("bc", out + err)
 
     def _cli(self, m):
         with tempfile.TemporaryDirectory() as d:

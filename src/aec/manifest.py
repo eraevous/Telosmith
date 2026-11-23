@@ -56,7 +56,8 @@ _SECRETS = (
                                              r"|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})")),
     ("a URL with credentials", re.compile(r"[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@", re.I)),
     ("an environment assignment", re.compile(r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASS|AUTH)"
-                                             r"[A-Z0-9_]*=[^\s'\"]+")),  # the whole value, also inside repr() quotes
+                                             r"[A-Z0-9_]*=(?:\"[^\"\n]*\"?|'[^'\n]*'?|[^\s'\"]+)")),
+    # the assignment's whole value: double- or single-quoted (closed or not) or bare; matches inside repr() quotes too
 )
 
 
