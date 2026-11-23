@@ -19,6 +19,7 @@
   aec mcp [--root ROOT] [--records PATH]  serve the records over MCP (stdio, read-only)
   aec a2a card --name N --description D --version V --url URL [--skill ID=NAME|DESC|TAGS] [-o FILE]  A2A 1.0 Agent Card
   aec a2a check FILE  exit 0 only when FILE has every field A2A 1.0 requires
+  aec skills new NAME --description D [--dir DIR] | check PATH...  Agent Skills (SKILL.md) folders
   aec config show [--repo D] [--json] | check [--repo D]  the repository's .aec/config.json, resolved over defaults
   aec agents show|write|check [--repo D] [--file F] [--append]  the shared governance block of AGENTS.md
   python -m aec speckit drift PATH... [--all] [--json]         spec/record drift, both directions (writes nothing)
@@ -31,7 +32,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, a2a, agents, config, mcp, pin, speckit, userhook
+from . import __version__, a2a, agents, config, mcp, pin, skills, speckit, userhook
 from . import edges as E
 from .impact import impact, render
 from .records import Store, check
@@ -152,6 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     pin.add_parser(sub)
     mcp.add_parser(sub)
     a2a.add_parser(sub)
+    skills.add_parser(sub)
     config.add_parser(sub)
     agents.add_parser(sub)
     snap_parser = sub.add_parser("snapshot", help="snapshot a working tree or local git revision")
@@ -427,7 +429,7 @@ HANDLERS = {
     "edges": _cmd_edges, "check": _cmd_check, "impact": _cmd_impact, "code-impact": _cmd_code_impact,
     "init": _cmd_init, "anchor": _cmd_anchor, "append": _cmd_append, "import-purpose": _cmd_import_purpose, "source": _cmd_source,
     "snapshot": _cmd_snapshot, "diff": _cmd_diff, "reach": _cmd_query, "fan": _cmd_query, "unresolved": _cmd_query,
-    "speckit": speckit.run, "hook": userhook.cli, "pin-check": pin.cli, "mcp": mcp.cli, "a2a": a2a.cli,
+    "speckit": speckit.run, "hook": userhook.cli, "pin-check": pin.cli, "mcp": mcp.cli, "a2a": a2a.cli, "skills": skills.cli,
     "config": config.cli, "agents": agents.cli,
 }
 
