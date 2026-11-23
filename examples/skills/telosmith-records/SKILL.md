@@ -20,7 +20,7 @@ governs.
 1. Check the records are sound: `aec check .aec/records.jsonl`. Exit 0 means no errors; read any warnings.
 2. Find the records anchored to the file you will touch: search `.aec/records.jsonl` for `"path": "PATH"`
    (each record's `anchors` name the files it governs).
-3. Read a record's anchored passage: `aec source show ID`.
+3. Read a record's anchored passage: `aec source show ID@VERSION` (the record's `id` and `version` joined by `@`).
 4. After the change, run `aec check` again. An anchor-mismatch warning means a record's anchored text changed:
    say so in your output rather than editing the record.
 

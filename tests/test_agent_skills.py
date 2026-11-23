@@ -52,6 +52,15 @@ class Parse(unittest.TestCase):
                               "metadata": {"k": "v", "q": "x: y"}})
         self.assertEqual(body, "hello")
 
+    def test_a_comment_after_a_quoted_value_needs_whitespace(self):
+        # Copilot (medium) on cf581cb: `"demo"#c` passed; YAML needs whitespace before '#'
+        for raw in ('"demo"#c', "'demo'#c", '"demo"x', "'demo'x"):
+            _, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
+            self.assertTrue(problems, raw)
+        for raw in ('"demo" #c', "'demo'\t# c", '"demo"', "'demo'  "):  # decoys
+            fm, _, problems = skills.parse_skill_md(f"---\nname: a\ndescription: {raw}\n---\n")
+            self.assertEqual((problems, fm.get("description")), ([], "demo"), raw)
+
     def test_no_front_matter_or_unclosed(self):
         self.assertTrue(skills.parse_skill_md("# no front matter\n")[2])
         self.assertIn("no closing", skills.parse_skill_md("---\nname: a\n")[2][0])
@@ -207,6 +216,10 @@ class Render(unittest.TestCase):
 class Folders(unittest.TestCase):
     def test_the_shipped_example_is_valid(self):
         self.assertEqual(skills.check_skill_dir(EXAMPLE), [])
+
+    def test_the_example_names_a_source_show_reference_that_resolves(self):
+        # Copilot (low) on cf581cb: `aec source show ID` needs ID@VERSION
+        self.assertIn("aec source show ID@VERSION", (EXAMPLE / "SKILL.md").read_text(encoding="utf-8"))
 
     def test_new_writes_a_valid_skill_and_never_overwrites(self):
         with tempfile.TemporaryDirectory() as t:

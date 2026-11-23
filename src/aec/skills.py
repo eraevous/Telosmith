@@ -57,14 +57,14 @@ def _scalar(raw: str, where: str, problems: list) -> str | None:
         except json.JSONDecodeError:
             problems.append(f"{where}: unterminated or malformed double-quoted string")
             return None
-        if raw[end:].strip() and not raw[end:].strip().startswith("#"):
+        if raw[end:].strip() and not re.match(r"\s+#", raw[end:]):  # a comment needs whitespace before '#'
             problems.append(f"{where}: text after the closing quote")
             return None
         return value
     if raw.startswith("'"):
-        m = re.fullmatch(r"'((?:[^']|'')*)'\s*(#.*)?", raw)
+        m = re.fullmatch(r"'((?:[^']|'')*)'(\s+#.*)?\s*", raw)
         if not m:
-            problems.append(f"{where}: unterminated single-quoted string")
+            problems.append(f"{where}: unterminated single-quoted string, or text after the closing quote")
             return None
         return m.group(1).replace("''", "'")
     if raw[:1] in ("|", ">", "[", "{", "&", "*", "!", "@", "`"):
