@@ -512,6 +512,19 @@ class Skills(unittest.TestCase):
             shutil.copytree(src, Path(repo) / "skills" / "telosmith-records")
             self.assertEqual(problems(m, root=Path(repo)), [])
 
+    def test_skill_check_messages_do_not_echo_values(self):  # Codex P2 on 1c4ace9 (fixed in 7f34dfa)
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / "skills" / "demo"
+            folder.mkdir(parents=True)
+            key = "\"API_TOKEN='abc\\\"123'\""  # a quoted metadata key, repeated
+            (folder / "SKILL.md").write_text(f"---\nname: demo\ndescription: d\nmetadata:\n  {key}: x\n  {key}: y\n"
+                                             "---\nbody\n", encoding="utf-8")
+            m = base()
+            m["sockets"]["skills"] = [{"path": "skills/demo", "name": "demo", "description": "d"}]
+            p = problems(m, root=Path(d))
+            self.assertTrue(any("repeated key" in x for x in p), p)
+            self.assertFalse(any("abc" in x or "123" in x for x in p), p)
+
     def test_skill_path_may_not_climb(self):
         m = base()
         m["sockets"]["skills"] = [{"path": "../x", "name": "x", "description": "d"}]
