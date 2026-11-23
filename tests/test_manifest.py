@@ -338,6 +338,18 @@ class CollectionSafety(unittest.TestCase):  # MAN-06, validation half
                 self.assertNotIn(s, out + err)
                 self.assertIn("[redacted]", out + err)
 
+    def test_environment_assignment_is_redacted_whole_even_inside_quotes(self):  # Codex P2 on 3dc9165
+        for mutate in (lambda m: m["sockets"].__setitem__("other", [{"id": "x", "kind": "folder", "direction": "in",
+                                                                     "location": "x", "planned": "API_TOKEN=abc123"}]),
+                       lambda m: m.__setitem__("manifest", "API_TOKEN=abc123"),
+                       lambda m: m.__setitem__("manifest", "x(DB_PASSWORD=abc123)")):
+            with self.subTest(mutate=mutate):
+                m = base()
+                mutate(m)
+                code, out, err = self._cli(m)
+                self.assertEqual(code, 1)
+                self.assertNotIn("bc123", out + err)
+
     def _cli(self, m):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "m.json"
