@@ -21,6 +21,8 @@ import sys
 import tempfile
 import unittest
 
+from _bash import BASH, NO_BASH
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = str(ROOT / "src")
 sys.path.insert(0, SRC)
@@ -124,7 +126,7 @@ class CliOutputTests(_Tmp):
         self.assertEqual(os.stat(dest).st_mode & 0o777, 0o666 & ~umask)
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")
+@unittest.skipUnless(BASH and shutil.which("git"), NO_BASH + "; and git")
 class ProjectHookTests(_Tmp):
     def setUp(self):
         super().setUp()
@@ -136,7 +138,7 @@ class ProjectHookTests(_Tmp):
 
     def _hook(self):
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(self.project), PYTHONPATH=SRC)
-        return subprocess.run(["bash", "-c", HOOK_COMMAND], env=env, capture_output=True, text=True, timeout=120)
+        return subprocess.run([BASH, "-c", HOOK_COMMAND], env=env, capture_output=True, text=True, timeout=120)
 
     def _swap_for_link(self, rel, target):
         path = self.project / rel

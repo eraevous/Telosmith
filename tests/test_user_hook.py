@@ -7,11 +7,12 @@ that nothing in a hostile checkout is imported.
 import json
 import os
 import pathlib
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+from _bash import BASH, NO_BASH
 
 from aec import userhook as U
 
@@ -103,7 +104,7 @@ def _venv(dest: pathlib.Path) -> pathlib.Path | None:
         return None
 
 
-@unittest.skipUnless(shutil.which("bash") and os.name == "posix", "needs bash")
+@unittest.skipUnless(BASH and os.name == "posix", "POSIX only; " + NO_BASH)
 class InstalledHookTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -158,7 +159,7 @@ class InstalledHookTests(unittest.TestCase):
                 (project / ".aec").mkdir(parents=True)
                 (project / ".aec" / "records.jsonl").write_text("")
                 env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
-                run = subprocess.run(["bash", "-c", U.hook_command(str(self.py), pin)], env=env,
+                run = subprocess.run([BASH, "-c", U.hook_command(str(self.py), pin)], env=env,
                                      capture_output=True, text=True, timeout=60)
                 self.assertEqual(run.returncode, U.REFUSED)
                 self.assertIn("refused to run", run.stderr)
@@ -186,7 +187,7 @@ class InstalledHookTests(unittest.TestCase):
                 (project / ".aec" / "records.jsonl").write_text("")
                 subprocess.run(["git", "init", "-q", str(project)], check=True)
                 env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
-                subprocess.run(["bash", "-c", U.hook_command(str(self.py), pin)], env=env,
+                subprocess.run([BASH, "-c", U.hook_command(str(self.py), pin)], env=env,
                                capture_output=True, text=True, timeout=120)
                 self.assertTrue((project / ".aec" / "edges.jsonl").exists(), "the hook ran aec")
                 self.assertFalse(ran.exists(), "the hook loaded unverified cached bytecode")
@@ -207,7 +208,7 @@ class InstalledHookTests(unittest.TestCase):
                 (project / ".aec").mkdir(parents=True)
                 (project / ".aec" / "records.jsonl").write_text("")
                 env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
-                run = subprocess.run(["bash", "-c", U.hook_command(str(self.py), pin)], env=env,
+                run = subprocess.run([BASH, "-c", U.hook_command(str(self.py), pin)], env=env,
                                      capture_output=True, text=True, timeout=60)
                 self.assertEqual(run.returncode, U.REFUSED, run.stderr)
                 self.assertIn("is a symlink", run.stderr)
@@ -224,7 +225,7 @@ class InstalledHookTests(unittest.TestCase):
 
     def _hook(self, project, pin):
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
-        return subprocess.run(["bash", "-c", U.hook_command(str(self.py), pin)], env=env,
+        return subprocess.run([BASH, "-c", U.hook_command(str(self.py), pin)], env=env,
                               capture_output=True, text=True, timeout=120)
 
     def test_symlinked_outputs_are_replaced_not_followed(self):
@@ -291,12 +292,12 @@ class InstalledHookTests(unittest.TestCase):
                 (project / f"{name}.py").write_text(shadow)
             env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project), PYTHONPATH=str(project))
             cmd = U.hook_command(str(self.py), pin)
-            quiet = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=60)
+            quiet = subprocess.run([BASH, "-c", cmd], env=env, capture_output=True, text=True, timeout=60)
             self.assertEqual((quiet.returncode, quiet.stderr), (0, ""), "no records: the hook stays quiet")
             (project / ".aec").mkdir()
             (project / ".aec" / "records.jsonl").write_text("")
             subprocess.run(["git", "init", "-q", str(project)], check=True)
-            subprocess.run(["bash", "-c", cmd], env=env, cwd=project, capture_output=True, text=True, timeout=120)
+            subprocess.run([BASH, "-c", cmd], env=env, cwd=project, capture_output=True, text=True, timeout=120)
             self.assertFalse(marker.exists(), "the hook imported code from the checkout")
             self.assertTrue((project / ".aec" / "edges.jsonl").exists(), "the hook ran the installed aec")
 

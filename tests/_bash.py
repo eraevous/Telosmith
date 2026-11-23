@@ -1,0 +1,34 @@
+"""The bash that hook tests run, found the way the shell that started them finds it.
+
+On Windows, `subprocess.run(["bash", ...])` goes through CreateProcess, which searches System32
+before PATH and so starts the WSL launcher (`System32\\bash.exe`), not the Git Bash on PATH. With
+no distribution installed that launcher prints a UTF-16 notice and exits 1 (HO-AEC-20261123-ER2R,
+Telosmith #111). Tests therefore run the absolute path that `shutil.which` gives, and treat the
+WSL launcher as "no bash": a named skip, not a failure.
+"""
+import os
+import shutil
+import stat
+import sys
+
+
+def _find_bash():
+    path = shutil.which("bash")
+    if path and os.name == "nt" and os.path.basename(os.path.dirname(path)).lower() in ("system32", "sysnative"):
+        return None
+    return path
+
+
+BASH = _find_bash()
+NO_BASH = "needs bash (on Windows: Git Bash on PATH; the WSL launcher in System32 doesn't count)"
+
+
+def rmtree(path):
+    """shutil.rmtree that also removes read-only files (git objects on Windows)."""
+    def retry(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=retry)
+    else:
+        shutil.rmtree(path, onerror=retry)

@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import edges as E
 
@@ -34,6 +34,12 @@ def git(root, *args, input=None, optional=False):
     return result.stdout
 
 
+def _not_repo_relative(x):
+    # Judged the same on every OS: `/abs` is absolute even where `Path('/abs').is_absolute()` is False (Windows).
+    return (PurePosixPath(x).is_absolute() or bool(PureWindowsPath(x).anchor)
+            or '..' in PurePosixPath(x).parts or '\\' in x)
+
+
 def configuration(root, ignore=None, source_roots=None):
     path = Path(root) / CONFIG
     try:
@@ -49,11 +55,11 @@ def configuration(root, ignore=None, source_roots=None):
     if not isinstance(ignored, list) or any(not isinstance(x, str) or not x for x in ignored):
         raise ValueError('ignore must be a list of relative patterns')
     ignored = sorted(E.DEFAULT_IGNORE | set(ignored) | set(ignore or []))
-    if any(Path(x).is_absolute() or PureWindowsPath(x).drive or '..' in Path(x).parts or '\\' in x for x in ignored):
+    if any(_not_repo_relative(x) for x in ignored):
         raise ValueError('ignore patterns must be repo-relative')
     if roots != 'auto':
         if not isinstance(roots, list) or any(not isinstance(x, str) or not x or
-                Path(x).is_absolute() or PureWindowsPath(x).drive or '..' in Path(x).parts or '\\' in x for x in roots):
+                _not_repo_relative(x) for x in roots):
             raise ValueError('source_roots must be auto or relative directories')
         roots = sorted(set(roots))
     return {'tool_version': E.TOOL_VERSION, 'ignore': ignored, 'source_roots': roots,

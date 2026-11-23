@@ -41,23 +41,23 @@ def read_pin(root) -> str:
     (dangling or not), unreadable, or not a full 40-character commit SHA."""
     path = Path(root) / UPSTREAM_FILE
     if path.is_symlink():
-        raise PinError(f"{UPSTREAM_FILE} is a symlink; the pin must be a regular file in the repository")
+        raise PinError(f"{UPSTREAM_FILE.as_posix()} is a symlink; the pin must be a regular file in the repository")
     if not path.exists():
-        raise PinError(f"no Telosmith pin: {UPSTREAM_FILE} not found under {root} (the only pin source; "
+        raise PinError(f"no Telosmith pin: {UPSTREAM_FILE.as_posix()} not found under {root} (the only pin source; "
                        f"add it with {{\"commit\": \"<40-character Telosmith commit>\"}})")
     if not path.is_file():
-        raise PinError(f"{UPSTREAM_FILE} is not a regular file")
+        raise PinError(f"{UPSTREAM_FILE.as_posix()} is not a regular file")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        raise PinError(f"cannot read {UPSTREAM_FILE}: {exc}") from exc
+        raise PinError(f"cannot read {UPSTREAM_FILE.as_posix()}: {exc}") from exc
     commit = data.get("commit") if isinstance(data, dict) else None
     if not isinstance(commit, str) or not commit:
-        raise PinError(f"{UPSTREAM_FILE} has no commit")
+        raise PinError(f"{UPSTREAM_FILE.as_posix()} has no commit")
     if not SHA_RE.fullmatch(commit):
         kind = ("an abbreviated commit" if re.fullmatch(r"[0-9a-f]{4,39}", commit)
                 else "a tag or branch, not a commit")
-        raise PinError(f"{UPSTREAM_FILE} pins {commit!r}, {kind}: only a full 40-character commit SHA "
+        raise PinError(f"{UPSTREAM_FILE.as_posix()} pins {commit!r}, {kind}: only a full 40-character commit SHA "
                        f"establishes what is installed; pin the full commit")
     return commit
 
@@ -90,8 +90,8 @@ def check(root, local=_UNSET) -> str:
                        f"pip install \"git+https://github.com/eraevous/Telosmith.git@{ref}\"")
     commit = local["commit"]
     if commit == ref:
-        return f"local aec {commit[:12]} ({local['how']}) matches the pin {ref[:12]} ({UPSTREAM_FILE})"
-    raise PinError(f"local aec is {commit[:12]} ({local['how']}) but {UPSTREAM_FILE} pins {ref[:12]}")
+        return f"local aec {commit[:12]} ({local['how']}) matches the pin {ref[:12]} ({UPSTREAM_FILE.as_posix()})"
+    raise PinError(f"local aec is {commit[:12]} ({local['how']}) but {UPSTREAM_FILE.as_posix()} pins {ref[:12]}")
 
 
 def add_parser(sub) -> None:

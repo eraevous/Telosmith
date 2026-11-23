@@ -17,6 +17,9 @@ import sys
 import tempfile
 import unittest
 
+from _bash import BASH, NO_BASH
+from _bash import rmtree as force_rmtree
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = str(ROOT / "src")
 sys.path.insert(0, SRC)
@@ -88,7 +91,7 @@ class Checkout(unittest.TestCase):
         env.update(env_extra or {})
         if pythonpath is not None:
             env["PYTHONPATH"] = pythonpath
-        return subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True, timeout=120)
+        return subprocess.run([BASH, "-c", command], env=env, capture_output=True, text=True, timeout=120)
 
     def _both(self):
         # Each form runs on its own restored copy of the checkout, so one form's outputs can't shape the other's
@@ -100,7 +103,7 @@ class Checkout(unittest.TestCase):
             try:
                 done[name] = self._run(cmd, project=copy)
             finally:
-                shutil.rmtree(copy)
+                force_rmtree(copy)
         return done
 
     def assertSameExit(self, expected):
@@ -110,7 +113,7 @@ class Checkout(unittest.TestCase):
         return done
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")
+@unittest.skipUnless(BASH and shutil.which("git"), NO_BASH + "; and git")
 class SideBySide(Checkout):
     def test_clean_checkout_is_quiet(self):
         self.assertSameExit(0)
@@ -228,7 +231,7 @@ class SideBySide(Checkout):
         self.assertIn("sys.argv=['aec','hook','project',P]", HOOK_LINE_GATE)
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")
+@unittest.skipUnless(BASH and shutil.which("git"), NO_BASH + "; and git")
 class PreImportGate(Checkout):
     """The line runs `aec hook project` only for an aec pip-installed from git at the pinned commit, and decides
     that before any aec code, or any code on an environment import path, runs."""
@@ -370,7 +373,7 @@ class PreImportGate(Checkout):
 
     def test_missing_python_capability_fails_closed(self):
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(self.project), PATH="/nonexistent")
-        done = subprocess.run(["/bin/bash", "-c", HOOK_LINE_COMMAND], env=env, capture_output=True, text=True)
+        done = subprocess.run([BASH, "-c", HOOK_LINE_COMMAND], env=env, capture_output=True, text=True)
         self.assertNotEqual(done.returncode, 0)
         self.assertNotEqual(done.returncode, 2)
 
