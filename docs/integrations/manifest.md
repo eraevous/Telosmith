@@ -105,7 +105,8 @@ repository's. It checks rules 1 to 9 as far as a file can show them:
   such as `TOKEN=` or `API_TOKEN="..."`), and no host paths in `command` (an `--option=/abs/path` value included),
   skill paths or `other` locations; no control characters in skill paths. A problem names where, never the value:
   text from the file is shown only when it is short and plain (no `=`, quotes, escapes or control characters) and
-  holds nothing credential-shaped, otherwise `[not shown]`; the version string is never echoed. Patterns can't catch
+  holds nothing credential-shaped, otherwise `[not shown]` (quoted values inside `aec a2a`'s messages too); the
+  version string is never echoed. Patterns can't catch
   every way to spell a secret, so what's printed doesn't depend on them alone;
 - with `--root`, each skill folder passes `aec skills check` and its name and description equal the manifest's.
 

@@ -27,6 +27,7 @@ grants are listed as declarations (the protocol is undecided, so nothing is gran
 """
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -81,6 +82,21 @@ def _echo(v) -> str:
     to spell a secret (Codex security review on #110), so diagnostics don't rely on them alone."""
     v = str(v)
     return v if _PLAIN.fullmatch(v) and redact(v) == v else "[not shown]"
+
+
+_LITERAL = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
+
+
+def _scrub(message: str) -> str:
+    """A message from another validator (aec a2a) with each quoted string literal in it passed through _echo: field
+    names stay readable, values that aren't plain become [not shown] (Codex on #110)."""
+    def one(m):
+        try:
+            inner = ast.literal_eval(m.group(0))
+        except (ValueError, SyntaxError):
+            return "[not shown]"
+        return m.group(0) if _echo(inner) == inner else "[not shown]"
+    return _LITERAL.sub(one, message)
 
 
 def _str(v) -> bool:
@@ -191,7 +207,7 @@ def _check_a2a(sock, authority, tool_version, problems) -> None:
         return
     card = sock.get("agentCard")
     card_problems = a2a.validate_card(card)
-    problems.extend(f"{w}.agentCard: {p}" for p in card_problems)
+    problems.extend(f"{w}.agentCard: {_scrub(p)}" for p in card_problems)
     if not isinstance(card, dict):
         return
     if tool_version is not None and card.get("version") != tool_version:

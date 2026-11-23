@@ -418,6 +418,19 @@ class CollectionSafety(unittest.TestCase):  # MAN-06, validation half
         self.assertIn("inbox", out)
         self.assertIn("MCP resource", out)
 
+    def test_delegated_card_diagnostics_do_not_echo_values(self):  # Codex P2 on 6db2c7a
+        bad = "API_TOKEN='abc\"123'"
+        c = card()
+        c["skills"] = [a2a.skill(bad, "n", "d", ["t"]), a2a.skill(bad, "n", "d", ["t"])]  # repeated skill id
+        c["capabilities"]["extensions"][0]["params"]["x=abc123"] = []  # unknown authority key
+        m = base()
+        m["sockets"]["a2a"] = {"agentCard": c}
+        code, out, err = self._cli(m)
+        self.assertEqual(code, 1)
+        self.assertIn("repeats an earlier skill id", err)  # the problem is still reported
+        self.assertNotIn("abc", out + err)
+        self.assertNotIn("123", out + err)
+
     def _cli(self, m):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "m.json"
