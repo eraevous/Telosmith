@@ -14,6 +14,7 @@ CI). Rendering is deterministic and reads nothing but the config. Standard libra
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 import tempfile
 from pathlib import Path, PureWindowsPath
@@ -208,12 +209,16 @@ def cli(a, ap) -> int:
         text = _read(path)
         if a.agents_cmd == "check":
             parts = _split(text, path) if text is not None else None
+            # The hint repeats this run's --repo and --file, so following it writes the file just checked
+            # (Copilot on #101); a missing block needs --append, which adds the markers and the block.
+            cmd = f"aec agents write --repo {shlex.quote(a.repo)} --file {shlex.quote(a.file)}"
             if parts is None:
-                print(f"agents: {path}: no shared block; run `aec agents write --repo {a.repo}`", file=sys.stderr)
+                print(f"agents: {path}: no shared block; run `{cmd} --append` to add it at the end, or put the "
+                      "two marker lines where it belongs and run the same command without --append", file=sys.stderr)
                 return 1
             if parts[1] != block:
-                print(f"agents: {path}: the shared block differs from .aec/config.json; run "
-                      f"`aec agents write --repo {a.repo}`", file=sys.stderr)
+                print(f"agents: {path}: the shared block differs from .aec/config.json; run `{cmd}`",
+                      file=sys.stderr)
                 return 1
             print(f"agents: ok ({path})")
             return 0

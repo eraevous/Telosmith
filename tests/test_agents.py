@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import shlex
 import sys
 import tempfile
 import unittest
@@ -389,3 +390,40 @@ class ConfigKeys(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckHints(Case):
+    """Copilot on #101 (a592734): the hints check prints must work when followed as written."""
+
+    def test_missing_block_hint_appends_to_the_checked_file_and_works(self):
+        sub = self.root / "docs"
+        sub.mkdir()
+        (sub / "AGENTS.md").write_text("# Mine\n", encoding="utf-8")
+        code, _, err = run(["agents", "check", "--repo", str(self.root), "--file", "docs/AGENTS.md"])
+        self.assertEqual(code, 1)
+        hint = err.split("`")[1]
+        self.assertIn("--file docs/AGENTS.md", hint)
+        self.assertIn("--append", hint)
+        argv = shlex.split(hint)[1:]           # drop the program name
+        self.assertEqual(run(argv)[0], 0)
+        self.assertEqual(run(["agents", "check", "--repo", str(self.root), "--file", "docs/AGENTS.md"])[0], 0)
+        self.assertTrue((sub / "AGENTS.md").read_text(encoding="utf-8").startswith("# Mine\n"))
+
+    def test_stale_block_hint_keeps_repo_and_file(self):
+        sub = self.root / "docs"
+        sub.mkdir()
+        (sub / "AGENTS.md").write_text(OWN + agents.BEGIN + "\nstale\n" + agents.END + "\n" + TAIL, encoding="utf-8")
+        code, _, err = run(["agents", "check", "--repo", str(self.root), "--file", "docs/AGENTS.md"])
+        self.assertEqual(code, 1)
+        hint = err.split("`")[1]
+        self.assertNotIn("--append", hint)
+        self.assertEqual(run(shlex.split(hint)[1:])[0], 0)
+        self.assertEqual(run(["agents", "check", "--repo", str(self.root), "--file", "docs/AGENTS.md"])[0], 0)
+
+    def test_hint_quotes_paths_with_spaces(self):
+        root = self.root.parent / "my repo"
+        root.mkdir()
+        (root / ".aec").mkdir()
+        code, _, err = run(["agents", "check", "--repo", str(root)])
+        self.assertEqual(code, 1)
+        self.assertEqual(shlex.split(err.split("`")[1])[4], str(root))
