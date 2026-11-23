@@ -401,6 +401,23 @@ class CollectionSafety(unittest.TestCase):  # MAN-06, validation half
             self.assertTrue(problems(m, root=Path(d)))
             self.assertTrue(problems(m))
 
+    def test_user_text_is_echoed_only_when_plain(self):  # Codex security review on ec34c81
+        # adjacent shell segments (API_TOKEN=""abc123), escapes, and anything with = or quotes are never printed
+        for planned in ('API_TOKEN=""abc123', "API_TOKEN=\\abc123", "x=abc123", 'say "abc123"'):
+            with self.subTest(planned=planned):
+                m = base()
+                m["sockets"]["other"] = [{"id": "x", "kind": "folder", "direction": "in", "location": "x",
+                                          "planned": planned}]
+                _, out, err = self._cli(m)
+                self.assertNotIn("abc123", out + err)
+        # decoy: plain text is still shown, so the note stays useful
+        m = base()
+        m["sockets"]["other"] = [{"id": "inbox", "kind": "folder", "direction": "in", "location": "content/",
+                                  "planned": "MCP resource"}]
+        _, out, _ = self._cli(m)
+        self.assertIn("inbox", out)
+        self.assertIn("MCP resource", out)
+
     def _cli(self, m):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "m.json"

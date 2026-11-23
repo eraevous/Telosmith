@@ -72,6 +72,17 @@ def redact(text: str) -> str:
     return text
 
 
+_PLAIN = re.compile(r"[A-Za-z0-9 ._/:+,()-]{0,120}")
+
+
+def _echo(v) -> str:
+    """User text for a problem or note: shown only when it is short, plain (no =, quotes, escapes or control
+    characters) and holds nothing credential-shaped; otherwise "[not shown]". Pattern lists can't catch every way
+    to spell a secret (Codex security review on #110), so diagnostics don't rely on them alone."""
+    v = str(v)
+    return v if _PLAIN.fullmatch(v) and redact(v) == v else "[not shown]"
+
+
 def _str(v) -> bool:
     return isinstance(v, str) and bool(v.strip())
 
@@ -83,7 +94,7 @@ def _keys(obj, keys, where, problems, *, required=True) -> bool:
         return False
     extra = sorted(k for k in obj if k not in keys)
     if extra:
-        problems.append(f"{where} has unknown key(s) {[redact(str(k)) for k in extra]} (allowed: {list(keys)})")
+        problems.append(f"{where} has unknown key(s) {[_echo(k) for k in extra]} (allowed: {list(keys)})")
     if required:
         for k in keys:
             if k not in obj:
@@ -110,8 +121,8 @@ def _scan(v, where, problems) -> None:
                 return
     elif isinstance(v, dict):
         for k, x in v.items():
-            key = redact(str(k))
-            if key != str(k):  # a credential-shaped key: report where, with the key itself redacted
+            key = _echo(k)
+            if redact(str(k)) != str(k):  # a credential-shaped key: report where, with the key itself redacted
                 problems.append(f"{where} has a key that holds a credential-shaped value; a manifest carries no "
                                 "secrets or environment values")
             _scan(x, f"{where}.{key}", problems)
@@ -240,12 +251,12 @@ def _check_skills(items, root, problems) -> None:
             continue
         found = skills.check_skill_dir(folder)
         if found:
-            problems.extend(f"{w} ({redact(s['path'])}): {p}" for p in found)
+            problems.extend(f"{w} ({_echo(s['path'])}): {p}" for p in found)
             continue
         fm, _, _ = skills.parse_skill_md((folder / skills.SKILL_FILE).read_text(encoding="utf-8"))
         for k in ("name", "description"):
             if fm.get(k) != s[k]:
-                problems.append(f"{w}.{k} must equal the {k} in {redact(s['path'])}/{skills.SKILL_FILE}")
+                problems.append(f"{w}.{k} must equal the {k} in {_echo(s['path'])}/{skills.SKILL_FILE}")
 
 
 def _check_other(items, problems, notes) -> None:
@@ -264,8 +275,8 @@ def _check_other(items, problems, notes) -> None:
             problems.append(f"{w}.direction must be 'in' or 'out'")
         if _host_path(o["location"]):
             problems.append(f"{w}.location is a host path; give it relative to the repository")
-        notes.append(f"{w} '{redact(o['id'])}' is transitional ({redact(o['kind'])}, {o['direction']}); planned: "
-                     f"{redact(o['planned']) or 'not named'}")
+        notes.append(f"{w} '{_echo(o['id'])}' is transitional ({_echo(o['kind'])}, {o['direction']}); planned: "
+                     f"{_echo(o['planned']) if o['planned'] else 'not named'}")
 
 
 def validate(m, *, root=None) -> tuple[list[str], list[str]]:
