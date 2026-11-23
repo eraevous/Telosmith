@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 
-from _bash import BASH, NO_BASH
+from _platform import BASH, NO_BASH
 
 from aec import userhook as U
 

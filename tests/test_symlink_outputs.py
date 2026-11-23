@@ -21,7 +21,7 @@ import sys
 import tempfile
 import unittest
 
-from _bash import BASH, NO_BASH
+from _platform import BASH, NO_BASH, POSIX_MODES
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = str(ROOT / "src")
@@ -99,6 +99,7 @@ class CliOutputTests(_Tmp):
         self.assertEqual([p.name for p in dest.parent.iterdir()], ["edges.jsonl"], "no temp file left behind")
 
 
+    @unittest.skipUnless(os.name == "posix", POSIX_MODES)
     def test_rewrite_keeps_an_existing_files_mode(self):  # Copilot on #83: don't widen a private file to 0644
         dest = self.project / "private.jsonl"
         dest.write_text("old")
@@ -107,6 +108,7 @@ class CliOutputTests(_Tmp):
         self.assertEqual(dest.read_text(), "new")
         self.assertEqual(os.stat(dest).st_mode & 0o777, 0o600)
 
+    @unittest.skipUnless(os.name == "posix", POSIX_MODES)
     def test_restrictive_umask_is_honoured(self):  # Copilot on #83: a 077 umask gives 0600, like an ordinary write
         old = os.umask(0o077)
         try:

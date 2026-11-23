@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from _bash import BASH, NO_BASH
+from _platform import BASH, NO_BASH
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))

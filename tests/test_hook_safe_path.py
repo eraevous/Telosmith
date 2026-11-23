@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import unittest
 
-from _bash import BASH, NO_BASH
+from _platform import BASH, NO_BASH
 
 from aec.init import HOOK_COMMAND
 

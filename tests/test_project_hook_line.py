@@ -17,8 +17,8 @@ import sys
 import tempfile
 import unittest
 
-from _bash import BASH, NO_BASH
-from _bash import rmtree as force_rmtree
+from _platform import BASH, NO_BASH
+from _platform import rmtree as force_rmtree
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = str(ROOT / "src")

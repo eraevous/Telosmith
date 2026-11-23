@@ -1,4 +1,6 @@
-"""The bash that hook tests run, found the way the shell that started them finds it.
+"""Platform facts the tests need: which bash to run, and what Windows can't express.
+
+The bash that hook tests run is found the way the shell that started them finds it.
 
 On Windows, `subprocess.run(["bash", ...])` goes through CreateProcess, which searches System32
 before PATH and so starts the WSL launcher (`System32\\bash.exe`), not the Git Bash on PATH. With
@@ -32,3 +34,6 @@ def rmtree(path):
         shutil.rmtree(path, onexc=retry)
     else:
         shutil.rmtree(path, onerror=retry)
+
+
+POSIX_MODES = "POSIX file modes and umask: Windows keeps only a read-only bit (st_mode is 0o666 or 0o444)"

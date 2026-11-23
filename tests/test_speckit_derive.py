@@ -287,7 +287,7 @@ class Derive(unittest.TestCase):
 
     def test_crlf_checkout_is_not_a_hand_edit(self):  # decoy: line endings only
         self.r.run("speckit", "derive", str(self.r.feature), "--insert")
-        crlf = self.r.spec.read_bytes().replace(b"\n", b"\r\n")
+        crlf = self.r.spec.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")  # CRLF once, on any OS
         self.r.spec.write_bytes(crlf)
         res = S.derive_text(Store.load(self.r.root / ".aec" / "records.jsonl"), crlf.decode())
         self.assertEqual(res.skipped, [])
