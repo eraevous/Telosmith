@@ -15,8 +15,8 @@ a version was reused, and only its author can say which statement stands.
 
 ## Removing the copy (optional)
 
-No Telosmith command rewrites a records file: record lines are append-only (AGENTS.md,
-Constitution II), and deleting ledger lines with a tool would need its own owner decision.
+No Telosmith command rewrites a records file: record lines are append-only (AGENTS.md;
+Constitution II, in the project's governance charter), and deleting ledger lines with a tool would need its own owner decision.
 The copy is harmless to leave. **Removing it is the owner's call:** the procedure below describes how,
 for the owner or someone the owner has explicitly authorized for that copy; it is not itself an
 authorization, and an agent or contributor must not delete ledger lines on the strength of this page.

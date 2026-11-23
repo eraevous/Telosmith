@@ -188,7 +188,7 @@ exit 2
 ```
 
 Exit 2 is how a Claude Code hook hands its stderr back to the agent. The report says which
-conclusions to look at again; it does not say whether they are now false. Blank lines in the output
+conclusions to look at again (`stale` marks a *suspect link*: the code a record names has changed); it does not say whether they are now false. Blank lines in the output
 are trimmed to one.
 
 To have the hook point two calls away as well, add ` --reach-depth 2` after `--exit-code` in its `command`
