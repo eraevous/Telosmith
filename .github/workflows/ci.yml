@@ -39,7 +39,7 @@ jobs:
       - name: Records check against the snapshot (fails on dangling code references)
         run: PYTHONPATH=src python -m aec check .aec/records.jsonl --edges .aec/edges.jsonl
       - name: Code impact against the PR base (report-only; see the job summary)
-        if: github.event_name == 'pull_request' && matrix.python-version == '3.12'
+        if: github.event_name == 'pull_request' && matrix.python-version == '3.12' && runner.os == 'Linux'
         env:
           PYTHONPATH: src
           AEC_BASE: ${{ github.event.pull_request.base.sha }}
@@ -48,20 +48,20 @@ jobs:
           if [ -z "$base" ]; then
             echo "code-impact skipped: no base revision for this event" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
           fi
-          python -m aec snapshot . --rev "$base" -o .aec/before.jsonl || {
+          python3 -m aec snapshot . --rev "$base" -o .aec/before.jsonl || {
             echo "code-impact skipped: could not snapshot $base" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
-          report=$(python -m aec code-impact .aec/records.jsonl .aec/before.jsonl .aec/edges.jsonl 2>&1) || true
+          report=$(python3 -m aec code-impact .aec/records.jsonl .aec/before.jsonl .aec/edges.jsonl 2>&1) || true
           printf '%s\n' "$report"
           { echo "## Telosmith code-impact (structural, report-only) vs $base"; echo '```'
             printf '%s\n' "$report"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit 0
       - name: WP1A structural diff (artifact, no comments)
-        if: github.event_name == 'pull_request' && matrix.python-version == '3.12'
+        if: github.event_name == 'pull_request' && matrix.python-version == '3.12' && runner.os == 'Linux'
         env:
           AEC_PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: PYTHONPATH=src python -m aec diff --base origin/main --head "$AEC_PR_HEAD" --json > "$RUNNER_TEMP/aec-diff.json"
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'pull_request' && matrix.python-version == '3.12'
+        if: github.event_name == 'pull_request' && matrix.python-version == '3.12' && runner.os == 'Linux'
         with:
           name: aec-structural-diff
           path: ${{ runner.temp }}/aec-diff.json
