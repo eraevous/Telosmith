@@ -15,6 +15,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   declaration is never required, never a grant, and names its protocol as undecided. See
   `docs/integrations/authority-socket.md`.
 
+### Added (AEC-R-agents-md-impl@1, DEC-256 item 4)
+- `aec agents show|write|check`: renders the governance part every Telosmith-based repository's AGENTS.md shares
+  (read-first order, authority, records and ledgers, hard rules, run and drift, a glossary pointer) from the new
+  `agents.*` keys of `.aec/config.json`, between two marker lines. `write` replaces only what lies between the markers
+  and refuses a file without them unless `--append`; `check` exits 1 when the block is missing or stale. Symlinked
+  targets are refused. See `docs/integrations/agents-md.md`.
+
 ### Added (AEC-R-snippets-render-impl@1, DEC-256 item 3)
 - `aec snippets show hook|ci [--repo D] [--ref SHA]` prints the hook settings and CI job `aec init` writes, rendered
   from `.aec/config.json` (`init.hook_style`, `init.ci_name`) and the pin in `tools/aec_upstream.json`; offline.

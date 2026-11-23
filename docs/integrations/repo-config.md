@@ -28,6 +28,14 @@ without it behaves exactly as before: every setting has a default equal to today
 | `init.ci_name` | name (`A-Z a-z 0-9 _ -`, as `aec init` accepts) | `aec` | `aec init --ci-name`, `aec snippets show ci` |
 | `init.hook_style` | `inline` or `line` | `inline` | `aec init --hook-style`, `aec snippets show hook` |
 | `init.snippet_files` | `true` or `false` | `true` | `aec init`: whether it writes `.aec/snippets/` ([snippets.md](snippets.md)) |
+| `agents.owner` | one-line text | `the repository owner` | `aec agents` (who accepts design intent) |
+| `agents.glossary` | relative path or `https://` URL | none | `aec agents` (the DEC-255 glossary pointer) |
+| `agents.read_first` | list of relative paths | `[]` | `aec agents` (read after the purpose records, in order) |
+| `agents.ledgers` | list of relative paths | `[]` | `aec agents` (append-only files besides `records`) |
+| `agents.hard_rules` | list of one-line texts | `[]` | `aec agents` (added after the shared hard rules) |
+
+The `agents.*` texts end up in Markdown, so each is one printable line of at most 300 characters, with no backtick and
+no `<!--` or `-->`; a list has no repeated entries. See `docs/integrations/agents-md.md`.
 
 ## Rules
 
@@ -70,6 +78,6 @@ without it behaves exactly as before: every setting has a default equal to today
 
 ## Not yet
 
-Which checks run, hook strictness, the governance options `aec agents` renders (item 4), and the records path in the
+Which checks run, hook strictness, and the records path in the
 editor hook (`aec hook`, which still reads `.aec/records.jsonl` and ignores `records`). Each arrives with the code that
 reads it; until then the new keys are unknown keys.

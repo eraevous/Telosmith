@@ -20,6 +20,15 @@ Schema version 1 (every key optional):
   init.hook_style    choice   `aec init --hook-style`: `inline` or `line` (default `inline`)
   init.snippet_files bool     `aec init` writes `.aec/snippets/` (default true); false: it doesn't, and its next
                               steps point to `aec snippets show hook|ci` instead (DEC-256 item 3)
+  agents.owner       text     who accepts design intent, in the shared AGENTS.md block (default
+                              `the repository owner`)
+  agents.glossary    path|URL the glossary the shared block points to (DEC-255; default: none named)
+  agents.read_first  paths    files to read first, in order, after the purpose records (default: none)
+  agents.ledgers     paths    append-only files besides the records file (default: none)
+  agents.hard_rules  texts    this repository's extra hard rules, one line each (default: none)
+
+The `agents.*` texts are rendered into Markdown by `aec agents` (src/aec/agents.py), so each is one line, at most
+300 characters, and holds no backtick or HTML comment marker (`<!--`, `-->`).
 
 Paths are relative, use `/`, and stay inside the root. A list value, when a later version adds one, replaces the
 default whole; nothing is merged. Further keys (which checks run, hook strictness, governance options) arrive with
@@ -42,8 +51,15 @@ DEFAULTS: dict[str, object] = {
     "init.ci_name": "aec",
     "init.hook_style": "inline",
     "init.snippet_files": True,
+    "agents.owner": "the repository owner",
+    "agents.glossary": None,
+    "agents.read_first": [],
+    "agents.ledgers": [],
+    "agents.hard_rules": [],
 }
-_SECTIONS = {"init"}
+_SECTIONS = {"init", "agents"}
+_AGENT_KEYS = ("owner", "glossary", "read_first", "ledgers", "hard_rules")
+_TEXT_MAX = 300
 _TOP = {"_doc", "version", "records"} | _SECTIONS
 
 
@@ -60,7 +76,8 @@ class Config:
     def get(self, key: str) -> object:
         if key not in DEFAULTS:
             raise KeyError(key)
-        return self.values.get(key, DEFAULTS[key])
+        value = self.values.get(key, DEFAULTS[key])
+        return list(value) if isinstance(value, list) else value  # a caller never mutates a default
 
     def source(self, key: str) -> str:
         return "config" if key in self.values else "default"
@@ -106,6 +123,64 @@ def _check_path(key: str, value, problems: list[str]) -> None:
         problems.append(f"{key}: must stay inside the repository root (no '..'), got {value!r}")
 
 
+def _check_text(key: str, value, problems: list[str]) -> bool:
+    """A one-line text that `aec agents` renders into Markdown (no backtick, no HTML comment marker)."""
+    if not isinstance(value, str) or not value.strip():
+        problems.append(f"{key}: must be a non-empty string")
+        return False
+    if len(value) > _TEXT_MAX or any(c in value for c in "\r\n\x85\u2028\u2029") or not value.isprintable():
+        problems.append(f"{key}: must be one printable line of at most {_TEXT_MAX} characters")
+        return False
+    if "`" in value or "<!--" in value or "-->" in value:
+        problems.append(f"{key}: may not contain a backtick or an HTML comment marker, got {value!r}")
+        return False
+    return True
+
+
+def _check_list(key: str, value, item, problems: list[str]) -> None:
+    if not isinstance(value, list):
+        problems.append(f"{key}: must be a list")
+        return
+    seen = set()
+    for i, v in enumerate(value):
+        item(f"{key}[{i}]", v, problems)
+        if isinstance(v, str):
+            if v in seen:
+                problems.append(f"{key}[{i}]: repeated value {v!r}")
+            seen.add(v)
+
+
+def _check_agent_path(key: str, value, problems: list[str]) -> None:
+    if _check_text(key, value, problems):
+        _check_path(key, value, problems)
+
+
+def _check_agents(agents, values: dict[str, object], problems: list[str]) -> None:
+    if not isinstance(agents, dict):
+        problems.append("agents: must be an object")
+        return
+    for key in sorted(set(agents) - set(_AGENT_KEYS)):
+        problems.append(f"unknown key 'agents.{key}' (known: {', '.join('agents.' + k for k in _AGENT_KEYS)})")
+    if "owner" in agents:
+        _check_text("agents.owner", agents["owner"], problems)
+    if "glossary" in agents:
+        v = agents["glossary"]
+        if _check_text("agents.glossary", v, problems) and not v.startswith("https://"):
+            if "://" in v:
+                problems.append(f"agents.glossary: a URL must start with https://, got {v!r}")
+            else:
+                _check_path("agents.glossary", v, problems)
+    if "read_first" in agents:
+        _check_list("agents.read_first", agents["read_first"], _check_agent_path, problems)
+    if "ledgers" in agents:
+        _check_list("agents.ledgers", agents["ledgers"], _check_agent_path, problems)
+    if "hard_rules" in agents:
+        _check_list("agents.hard_rules", agents["hard_rules"], _check_text, problems)
+    for key in _AGENT_KEYS:
+        if key in agents:
+            values[f"agents.{key}"] = agents[key]
+
+
 def validate(doc) -> tuple[dict[str, object], list[str]]:
     """Return (settings by dotted key, problems). Never raises."""
     if not isinstance(doc, dict):
@@ -119,7 +194,12 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
     if "version" in doc and (type(doc["version"]) is not int or doc["version"] != SCHEMA_VERSION):
         problems.append(f"version: this Telosmith reads schema version {SCHEMA_VERSION}, got {doc['version']!r}")
     if "records" in doc:
+        # `aec agents` renders the records path into Markdown, so it gets the same text rules as the agents.* texts
+        # (Codex on #101: a path holding a newline and an end marker would forge the block's end).
+        before = len(problems)
         _check_path("records", doc["records"], problems)
+        if len(problems) == before:
+            _check_text("records", doc["records"], problems)
         values["records"] = doc["records"]
     if "init" in doc:
         init = doc["init"]
@@ -144,6 +224,8 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
                 if type(v) is not bool:
                     problems.append(f"init.snippet_files: true or false, got {v!r}")
                 values["init.snippet_files"] = v
+    if "agents" in doc:
+        _check_agents(doc["agents"], values, problems)
     return (values if not problems else {}), problems
 
 
