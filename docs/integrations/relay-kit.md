@@ -1,7 +1,7 @@
 # Telosmith with relay-kit
 
 [relay-kit](https://github.com/eraevous/relay-kit) owns coordination mechanics (handoffs, delivery,
-IDs, the decision and challenge ledgers); Telosmith owns development semantics (DEC-018). The one
+IDs, the decision ledger of architecture decision records (ADRs) and the challenge ledger); Telosmith owns development semantics (DEC-018). The one
 canonical decision record lives in the owner's relay-kit records, a repository made with
 `relay-kit init`. Telosmith references it rather than copying it: a projected decision in
 `.aec/records.jsonl` carries an anchor into the records' `governance/decisions.jsonl`, and
