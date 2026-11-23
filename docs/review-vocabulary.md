@@ -4,8 +4,8 @@ Names for five ways an agent's report can claim more than happened. A reviewer t
 so the same failure gets the same word across reviews. They are signals, not scores: no counts, no severity numbers,
 no integrity percentages. A tag says where to look; it does not grade the work.
 
-The names come from a model-written hallucination audit of the earlier Codex++ traces (HONT, its
-"Hallucination Ontology"). The owner adopted the names and dropped that audit's scores. Its own integrity score had no
+The names come from a model-written hallucination eval of the earlier Codex++ traces (HONT, its
+"Hallucination Ontology"). The owner adopted the names and dropped that eval's scores. Its own integrity score had no
 stated basis, which is the fourth failure below.
 
 | Tag | What it looks like | What clears it |
@@ -192,7 +192,8 @@ The useful moments to ask for evidence are transitions, where a claim changes wh
 - a planned action becomes a reported result;
 - a past record becomes current authority.
 
-At such a transition, a reviewer asks for **receipts**, at the rung the claim states:
+At such a transition, a reviewer asks for **receipts** (provenance: the trace of a run or the record that shows a
+state), at the rung the claim states:
 
 | Rung | Receipt |
 |---|---|

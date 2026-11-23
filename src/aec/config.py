@@ -18,6 +18,8 @@ Schema version 1 (every key optional):
                               records path is optional (`records_path`, `discovered_records`)
   init.ci_name       name     `aec init --ci-name` (default `aec`)
   init.hook_style    choice   `aec init --hook-style`: `inline` or `line` (default `inline`)
+  init.snippet_files bool     `aec init` writes `.aec/snippets/` (default true); false: it doesn't, and its next
+                              steps point to `aec snippets show hook|ci` instead (DEC-256 item 3)
   agents.owner       text     who accepts design intent, in the shared AGENTS.md block (default
                               `the repository owner`)
   agents.glossary    path|URL the glossary the shared block points to (DEC-255; default: none named)
@@ -48,6 +50,7 @@ DEFAULTS: dict[str, object] = {
     "records": ".aec/records.jsonl",
     "init.ci_name": "aec",
     "init.hook_style": "inline",
+    "init.snippet_files": True,
     "agents.owner": "the repository owner",
     "agents.glossary": None,
     "agents.read_first": [],
@@ -203,8 +206,9 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
         if not isinstance(init, dict):
             problems.append("init: must be an object")
         else:
-            for key in sorted(set(init) - {"ci_name", "hook_style"}):
-                problems.append(f"unknown key 'init.{key}' (known: init.ci_name, init.hook_style)")
+            for key in sorted(set(init) - {"ci_name", "hook_style", "snippet_files"}):
+                problems.append(f"unknown key 'init.{key}' (known: init.ci_name, init.hook_style, "
+                                "init.snippet_files)")
             if "ci_name" in init:
                 v = init["ci_name"]
                 if not isinstance(v, str) or not CI_NAME.fullmatch(v):
@@ -215,6 +219,11 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
                 if not isinstance(v, str) or v not in HOOK_STYLES:
                     problems.append(f"init.hook_style: 'inline' or 'line', got {v!r}")
                 values["init.hook_style"] = v
+            if "snippet_files" in init:
+                v = init["snippet_files"]
+                if type(v) is not bool:
+                    problems.append(f"init.snippet_files: true or false, got {v!r}")
+                values["init.snippet_files"] = v
     if "agents" in doc:
         _check_agents(doc["agents"], values, problems)
     return (values if not problems else {}), problems

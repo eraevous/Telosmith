@@ -25,8 +25,9 @@ without it behaves exactly as before: every setting has a default equal to today
 | `_doc` | string | none | nobody (JSON has no comments) |
 | `version` | `1` | `1` | the loader: any other value is an error |
 | `records` | relative path | `.aec/records.jsonl` | `aec source show\|search`, `aec import-purpose`, `aec mcp`, `aec speckit derive\|drift` (see below) |
-| `init.ci_name` | name (`A-Z a-z 0-9 _ -`, as `aec init` accepts) | `aec` | `aec init --ci-name` |
-| `init.hook_style` | `inline` or `line` | `inline` | `aec init --hook-style` |
+| `init.ci_name` | name (`A-Z a-z 0-9 _ -`, as `aec init` accepts) | `aec` | `aec init --ci-name`, `aec snippets show ci` |
+| `init.hook_style` | `inline` or `line` | `inline` | `aec init --hook-style`, `aec snippets show hook` |
+| `init.snippet_files` | `true` or `false` | `true` | `aec init`: whether it writes `.aec/snippets/` ([snippets.md](snippets.md)) |
 | `agents.owner` | one-line text | `the repository owner` | `aec agents` (who accepts design intent) |
 | `agents.glossary` | relative path or `https://` URL | none | `aec agents` (the DEC-255 glossary pointer) |
 | `agents.read_first` | list of relative paths | `[]` | `aec agents` (read after the purpose records, in order) |

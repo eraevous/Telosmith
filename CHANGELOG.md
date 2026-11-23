@@ -22,6 +22,13 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   and refuses a file without them unless `--append`; `check` exits 1 when the block is missing or stale. Symlinked
   targets are refused. See `docs/integrations/agents-md.md`.
 
+### Added (AEC-R-snippets-render-impl@1, DEC-256 item 3)
+- `aec snippets show hook|ci [--repo D] [--ref SHA]` prints the hook settings and CI job `aec init` writes, rendered
+  from `.aec/config.json` (`init.hook_style`, `init.ci_name`) and the pin in `tools/aec_upstream.json`; offline.
+  `aec snippets check` exits 1 when a committed copy under `.aec/snippets/` differs from a fresh render.
+- `init.snippet_files` (default `true`, so `aec init` is unchanged): `false` writes no `.aec/snippets/` copies.
+  See `docs/integrations/snippets.md`.
+
 ### Decided (AEC-D-manifest-schema@3, DEC-256 item 7; accepted by Zach 2026-11-22, no code yet)
 - `docs/integrations/manifest.md`: a tool manifest schema, `telosmith.manifest/1.0`, as an envelope holding the MCP
   listings, the A2A Agent Card (or `null`), Agent Skills folders, the authority declaration and runtime facts.

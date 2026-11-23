@@ -22,6 +22,7 @@
   aec skills new NAME --description D [--dir DIR] | check PATH...  Agent Skills (SKILL.md) folders
   aec config show [--repo D] [--json] | check [--repo D]  the repository's .aec/config.json, resolved over defaults
   aec agents show|write|check [--repo D] [--file F] [--append]  the shared governance block of AGENTS.md
+  aec snippets show hook|ci | check [--repo D] [--ref SHA]  render init's hook/CI snippets from the config; check copies
   python -m aec speckit drift PATH... [--all] [--json]         spec/record drift, both directions (writes nothing)
 """
 from __future__ import annotations
@@ -32,7 +33,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, a2a, agents, config, mcp, pin, skills, speckit, userhook
+from . import __version__, a2a, agents, config, mcp, pin, skills, snippets, speckit, userhook
 from . import edges as E
 from .impact import impact, render
 from .records import Store, check
@@ -156,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     skills.add_parser(sub)
     config.add_parser(sub)
     agents.add_parser(sub)
+    snippets.add_parser(sub)
     snap_parser = sub.add_parser("snapshot", help="snapshot a working tree or local git revision")
     snap_parser.add_argument("root", nargs="?", default=".")
     snap_parser.add_argument("--rev")
@@ -277,7 +279,8 @@ def _cmd_init(a, ap) -> int:
     try:
         rep = init(a.root, owner=a.owner or _git_user(a.root) or "owner", purpose=a.purpose,
                    purpose_anchor=a.purpose_anchor, hooks=a.hooks, ci_name=resolve(a.ci_name, cfg, "init.ci_name"),
-                   hook_style=resolve(a.hook_style, cfg, "init.hook_style"))
+                   hook_style=resolve(a.hook_style, cfg, "init.hook_style"),
+                   snippet_files=cfg.get("init.snippet_files"))
     except ValueError as error:
         ap.error(str(error))
     for f in rep["created"]:
@@ -430,7 +433,7 @@ HANDLERS = {
     "init": _cmd_init, "anchor": _cmd_anchor, "append": _cmd_append, "import-purpose": _cmd_import_purpose, "source": _cmd_source,
     "snapshot": _cmd_snapshot, "diff": _cmd_diff, "reach": _cmd_query, "fan": _cmd_query, "unresolved": _cmd_query,
     "speckit": speckit.run, "hook": userhook.cli, "pin-check": pin.cli, "mcp": mcp.cli, "a2a": a2a.cli, "skills": skills.cli,
-    "config": config.cli, "agents": agents.cli,
+    "config": config.cli, "agents": agents.cli, "snippets": snippets.cli,
 }
 
 
