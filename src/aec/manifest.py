@@ -55,15 +55,18 @@ _SECRETS = (
                                              r"|xox[abposr]-[A-Za-z0-9-]{6,}|sk-[A-Za-z0-9_-]{20,}"
                                              r"|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})")),
     ("a URL with credentials", re.compile(r"[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@", re.I)),
-    ("an environment assignment", re.compile(r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASS|AUTH)"
-                                             r"[A-Z0-9_]*=(?:\"[^\"\n]*\"?|'[^'\n]*'?|[^\s'\"]+)")),
-    # the assignment's whole value: double- or single-quoted (closed or not) or bare; matches inside repr() quotes too
+    # a NAME=value whose name ends in a sensitive word or has one before an underscore (TOKEN=, API_TOKEN=,
+    # AWS_SECRET_ACCESS_KEY=; not KEYBOARD=), and the whole value: double- or single-quoted (closed or not) or bare
+    ("an environment assignment", re.compile(r"(?<![A-Za-z0-9_])[A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|PASS|AUTH"
+                                             r"|CREDENTIALS?)(?:_[A-Z0-9_]*)?=(?:\"[^\"\n]*\"?|'[^'\n]*'?"
+                                             r"|[^\s'\"]+)")),
 )
 
 
 def redact(text: str) -> str:
-    """`text` with every credential-shaped part replaced by [redacted]: applied to every problem and note, so no
-    diagnostic repeats a value _scan would refuse (Codex P2 on #110)."""
+    """`text` with every credential-shaped part replaced by [redacted]. Applied to each input value before it is
+    formatted into a problem or note (so quoting can't hide a value from it), and again to the finished message as a
+    backstop (Codex and Copilot on #110)."""
     for _, rx in _SECRETS:
         text = rx.sub("[redacted]", text)
     return text
@@ -80,7 +83,7 @@ def _keys(obj, keys, where, problems, *, required=True) -> bool:
         return False
     extra = sorted(k for k in obj if k not in keys)
     if extra:
-        problems.append(f"{where} has unknown key(s) {extra} (allowed: {list(keys)})")
+        problems.append(f"{where} has unknown key(s) {[redact(str(k)) for k in extra]} (allowed: {list(keys)})")
     if required:
         for k in keys:
             if k not in obj:
@@ -89,7 +92,9 @@ def _keys(obj, keys, where, problems, *, required=True) -> bool:
 
 
 def _host_path(v: str) -> bool:
-    return bool(PurePosixPath(v).anchor or PureWindowsPath(v).anchor or v.startswith("~"))
+    """An absolute or home-relative path, as the whole string or as the value of an --option=value argument."""
+    candidates = [v] + ([v.split("=", 1)[1]] if v.startswith("-") and "=" in v else [])
+    return any(PurePosixPath(c).anchor or PureWindowsPath(c).anchor or c.startswith("~") for c in candidates)
 
 
 def _climbs(v: str) -> bool:
@@ -105,7 +110,11 @@ def _scan(v, where, problems) -> None:
                 return
     elif isinstance(v, dict):
         for k, x in v.items():
-            _scan(x, f"{where}.{k}", problems)
+            key = redact(str(k))
+            if key != str(k):  # a credential-shaped key: report where, with the key itself redacted
+                problems.append(f"{where} has a key that holds a credential-shaped value; a manifest carries no "
+                                "secrets or environment values")
+            _scan(x, f"{where}.{key}", problems)
     elif isinstance(v, list):
         for i, x in enumerate(v):
             _scan(x, f"{where}[{i}]", problems)
@@ -114,7 +123,8 @@ def _scan(v, where, problems) -> None:
 def _check_version(v, problems) -> None:
     m = _VERSION.fullmatch(v) if isinstance(v, str) else None
     if not m:
-        problems.append(f"manifest must be '{FAMILY}/<major>.<minor>' (this checker reads {SCHEMA}), got {v!r}"[:200])
+        problems.append(f"manifest must be '{FAMILY}/<major>.<minor>' (this checker reads {SCHEMA}); "
+                        f"got a {type(v).__name__} that isn't one")  # the value itself is never echoed
     elif int(m.group(1)) != MAJOR:
         problems.append(f"manifest is {v}; this checker reads major {MAJOR} only ({SCHEMA})")
     elif int(m.group(2)) > MINOR:
@@ -211,6 +221,9 @@ def _check_skills(items, root, problems) -> None:
         if not all(_str(s.get(k)) for k in SKILL_KEYS):
             problems.append(f"{w} needs non-empty path, name and description")
             continue
+        if any(ord(ch) < 32 for ch in s["path"]):  # NUL and other control characters: never reach the filesystem
+            problems.append(f"{w}.path holds a control character")
+            continue
         if _host_path(s["path"]) or _climbs(s["path"]):
             problems.append(f"{w}.path must be relative to the repository and stay inside it")
             continue
@@ -219,7 +232,7 @@ def _check_skills(items, root, problems) -> None:
         folder = Path(root) / s["path"]
         try:
             inside = folder.resolve().is_relative_to(Path(root).resolve())
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             inside = False
         if not inside:
             problems.append(f"{w}.path resolves outside the repository (through a symlink); "
@@ -227,12 +240,12 @@ def _check_skills(items, root, problems) -> None:
             continue
         found = skills.check_skill_dir(folder)
         if found:
-            problems.extend(f"{w} ({s['path']}): {p}" for p in found)
+            problems.extend(f"{w} ({redact(s['path'])}): {p}" for p in found)
             continue
         fm, _, _ = skills.parse_skill_md((folder / skills.SKILL_FILE).read_text(encoding="utf-8"))
         for k in ("name", "description"):
             if fm.get(k) != s[k]:
-                problems.append(f"{w}.{k} must equal the {k} in {s['path']}/{skills.SKILL_FILE}")
+                problems.append(f"{w}.{k} must equal the {k} in {redact(s['path'])}/{skills.SKILL_FILE}")
 
 
 def _check_other(items, problems, notes) -> None:
@@ -251,8 +264,8 @@ def _check_other(items, problems, notes) -> None:
             problems.append(f"{w}.direction must be 'in' or 'out'")
         if _host_path(o["location"]):
             problems.append(f"{w}.location is a host path; give it relative to the repository")
-        notes.append(f"{w} '{o['id']}' is transitional ({o['kind']}, {o['direction']}); planned: "
-                     f"{o['planned'] or 'not named'}")
+        notes.append(f"{w} '{redact(o['id'])}' is transitional ({redact(o['kind'])}, {o['direction']}); planned: "
+                     f"{redact(o['planned']) or 'not named'}")
 
 
 def validate(m, *, root=None) -> tuple[list[str], list[str]]:

@@ -336,7 +336,7 @@ class CollectionSafety(unittest.TestCase):  # MAN-06, validation half
                 code, out, err = self._cli(m)
                 self.assertEqual(code, 1)
                 self.assertNotIn(s, out + err)
-                self.assertIn("[redacted]", out + err)
+                self.assertNotIn(s[:12], out + err)  # no prefix either (Copilot on ec34c81: truncation)
 
     def test_environment_assignment_is_redacted_whole_even_inside_quotes(self):  # Codex P2 on 3dc9165
         for mutate in (lambda m: m["sockets"].__setitem__("other", [{"id": "x", "kind": "folder", "direction": "in",
@@ -356,6 +356,50 @@ class CollectionSafety(unittest.TestCase):  # MAN-06, validation half
                 code, out, err = self._cli(m)
                 self.assertEqual(code, 1)
                 self.assertNotIn("bc", out + err)
+
+    def test_copilot_findings_on_ec34c81(self):  # five findings, one subtest each, plus decoys
+        def other(**kw):
+            return [dict({"id": "x", "kind": "folder", "direction": "in", "location": "x", "planned": ""}, **kw)]
+        leaks = {
+            # 1. bare sensitive names
+            "bare TOKEN=": lambda m: m["sockets"].__setitem__("other", other(planned="TOKEN=abc123")),
+            "bare PASSWORD=": lambda m: (m["sockets"].__setitem__("mcp", mcp_section()),
+                                         m["sockets"]["mcp"].__setitem__("command", ["demo", "PASSWORD=abc123"])),
+            # 2. redact before quoting: a mixed-quote value inside repr()
+            "mixed quotes in version": lambda m: m.__setitem__("manifest", "API_TOKEN='abc\"123'"),
+            "secret as an unknown key": lambda m: m["tool"].__setitem__("ghp_" + "a" * 36, "x"),
+            # 3. credential-shaped dictionary keys inside embedded objects
+            "secret key in capabilities": lambda m: (m["sockets"].__setitem__("mcp", mcp_section()),
+                                                     m["sockets"]["mcp"]["capabilities"].__setitem__(
+                                                         "ghp_" + "b" * 36, {})),
+        }
+        for name, mutate in leaks.items():
+            with self.subTest(name=name):
+                m = base()
+                mutate(m)
+                code, out, err = self._cli(m)
+                self.assertEqual(code, 1, name)
+                for frag in ("abc", "123", "aaaaaaaa", "bbbbbbbb"):
+                    self.assertNotIn(frag, out + err, name)
+        # 4. host paths inside --option=value arguments
+        for arg in ("--root=/home/alice/data", "--config=C:\\Users\\alice\\c.json", "--x=~/y"):
+            with self.subTest(arg=arg):
+                m = base()
+                m["sockets"]["mcp"] = mcp_section()
+                m["sockets"]["mcp"]["command"] = ["demo", arg]
+                self.assertTrue(any("host path" in p for p in problems(m)), arg)
+        # decoys: relative option values and ordinary names stay valid
+        m = base()
+        m["sockets"]["mcp"] = mcp_section()
+        m["sockets"]["mcp"]["command"] = ["demo", "--root=data/sub", "KEYBOARD=us", "--mode=read"]
+        self.assertEqual(problems(m), [])
+
+    def test_nul_in_a_skill_path_is_a_problem_not_a_crash(self):  # Copilot on ec34c81
+        m = base()
+        m["sockets"]["skills"] = [{"path": "skills/\x00x", "name": "x", "description": "d"}]
+        with tempfile.TemporaryDirectory() as d:
+            self.assertTrue(problems(m, root=Path(d)))
+            self.assertTrue(problems(m))
 
     def _cli(self, m):
         with tempfile.TemporaryDirectory() as d:

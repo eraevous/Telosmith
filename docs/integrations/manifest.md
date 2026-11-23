@@ -101,8 +101,10 @@ repository's. It checks rules 1 to 9 as far as a file can show them:
   params equal `sockets.authority`; `protocol` is the placeholder; versions agree; `runtime` values are one of four;
 - each MCP tool has a `name` and an `inputSchema`; each `listPolicy` entry has a non-negative integer `ttlMs` and a
   non-empty `cacheScope` when present;
-- no credential-shaped string anywhere (tokens of common shapes, URLs with a password, `*_TOKEN=`-style assignments)
-  and no host paths in `command`, skill paths or `other` locations. A problem names where, never the value;
+- no credential-shaped string anywhere, keys included (tokens of common shapes, URLs with a password, assignments
+  such as `TOKEN=` or `API_TOKEN="..."`), and no host paths in `command` (an `--option=/abs/path` value included),
+  skill paths or `other` locations; no control characters in skill paths. A problem names where, never the value:
+  input values are redacted before they are formatted, and the version string is never echoed;
 - with `--root`, each skill folder passes `aec skills check` and its name and description equal the manifest's.
 
 Printed as notes, not problems: `other` sockets (transitional), `unknown` runtime answers, and declared grants
