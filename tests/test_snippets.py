@@ -194,6 +194,19 @@ class Check(Base):
         self.assertEqual(ok, [])
         self.assertTrue(any("symlink" in b for b in bad))
 
+    def test_unrelated_symlinks_and_folders_fail(self):
+        # Copilot on #102 (fixed in 22e9b14): an unrelated name was listed as OK before the file-type check
+        folder = self.copies()
+        outside = Path(self._tmp.name) / "notes-target.txt"
+        outside.write_text("hi")
+        os.symlink(outside, folder / "notes.txt")
+        (folder / "drafts").mkdir()
+        ok, bad = snippets.check(self.root, SHA)
+        self.assertTrue(any("notes.txt: not a regular file" in b for b in bad))
+        self.assertTrue(any("drafts: not a regular file" in b for b in bad))
+        self.assertFalse(any("notes.txt" in o or "drafts" in o for o in ok))
+        self.assertNotEqual(run(["snippets", "check", "--repo", str(self.root), "--ref", SHA])[0], 0)
+
     def test_check_writes_nothing(self):
         self.copies()
         before = sorted(p.relative_to(self.root).as_posix() for p in self.root.rglob("*"))
