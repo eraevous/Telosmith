@@ -76,6 +76,7 @@ The exact keys come with the item-1 PR and the semantic maintainer's records, no
    parallel with items 3 and 4 (see the dissent review).
 6. **Compatibility test in Lydian**: two separately built tools discover and call each other through MCP and an A2A task.
 7. **Manifest schema proposal** (Agent Card plus MCP listings), the part DEC-177 left with R&D: a proposed decision.
+   Proposed in [manifest.md](manifest.md) (`AEC-D-manifest-schema@2`, waiting on Zach).
 
 ## Not decided here
 
