@@ -49,10 +49,11 @@ conventional place to serve the card from.
 **Source and verification:** the field list was read from the A2A 1.0 protobuf reference
 (`lf.a2a.v1`) and the a2a-go v2 types on 2026-11-20, partly through a summary; the well-known path is
 from the earlier spec and was not re-checked. The checker enforces only the fields above. It does not
-check `securitySchemes`, `signatures` or extensions, and it does not prove a client accepts the card.
+check `securitySchemes` or `signatures`; of extensions it checks only that each has a `uri`, plus the authority socket's
+own rules ([authority-socket.md](authority-socket.md)). It does not prove a client accepts the card.
 
 ## Not covered
 
-Serving the card over HTTP, signing it, security schemes, the extended card, A2A task handling, the
-Agent Skills folder and the authority socket (later slices). The card describes the project; it grants
-no authority.
+Serving the card over HTTP, signing it, security schemes, the extended card and A2A task handling. The
+authority socket is declared in the card ([authority-socket.md](authority-socket.md)); the Agent Skills folder is
+[agent-skills.md](agent-skills.md). The card describes the project; it grants no authority.
