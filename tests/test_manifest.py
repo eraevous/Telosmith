@@ -537,6 +537,27 @@ class Cli(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("telosmith.manifest/1.0", out)
 
+    def test_file_outside_root_is_refused_with_root(self):  # Codex security review on 1c7382d
+        with tempfile.TemporaryDirectory() as d:
+            repo, outside = Path(d) / "repo", Path(d) / "outside.json"
+            (repo / ".aec").mkdir(parents=True)
+            outside.write_text(json.dumps(base()), encoding="utf-8")
+            link = repo / ".aec" / "manifest.json"
+            link.symlink_to(outside)
+            code, out, err = run(["manifest", "validate", str(link), "--root", str(repo)])
+            self.assertEqual(code, 1)
+            self.assertIn("outside", err)
+            self.assertNotIn("is a valid", out)
+            code, _, err = run(["manifest", "validate", str(outside), "--root", str(repo)])
+            self.assertEqual(code, 1, "a plain path outside the root is refused too")
+            # decoy: the same file inside the root, and a symlink that stays inside, both pass
+            inside = repo / "m.json"
+            inside.write_text(json.dumps(base()), encoding="utf-8")
+            self.assertEqual(run(["manifest", "validate", str(inside), "--root", str(repo)])[0], 0)
+            link.unlink()
+            link.symlink_to(inside)
+            self.assertEqual(run(["manifest", "validate", str(link), "--root", str(repo)])[0], 0)
+
     def test_unreadable_file_exits_1(self):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "m.json"

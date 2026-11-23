@@ -5,7 +5,7 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
-### Added (AEC-R-manifest-validate-impl@6, DEC-256 item 7 follow-up, first slice)
+### Added (AEC-R-manifest-validate-impl@7, DEC-256 item 7 follow-up, first slice)
 - `aec manifest validate FILE [--root DIR]` checks a tool manifest against `telosmith.manifest/1.0`
   (`AEC-D-manifest-schema@3`): exact keys in Telosmith-owned objects, every socket key in its empty form, version
   (newer minors refused by name), the card and its authority extension, version agreement, runtime values, list cache

@@ -108,7 +108,8 @@ repository's. It checks rules 1 to 9 as far as a file can show them:
   holds nothing credential-shaped, otherwise `[not shown]` (quoted values inside `aec a2a`'s messages too); the
   version string is never echoed. Patterns can't catch
   every way to spell a secret, so what's printed doesn't depend on them alone;
-- with `--root`, each skill folder passes `aec skills check` and its name and description equal the manifest's.
+- with `--root`, FILE itself must resolve inside the root (a symlink out is refused before it is read), and each
+  skill folder must too, pass `aec skills check`, and have the manifest's name and description.
 
 Printed as notes, not problems: `other` sockets (transitional), `unknown` runtime answers, and declared grants
 (nothing is granted while the protocol is undecided). Not checked here: whether the file matches what the server and

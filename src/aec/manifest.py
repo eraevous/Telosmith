@@ -343,6 +343,14 @@ def add_parser(sub) -> None:
 
 
 def cli(a, ap) -> int:
+    if a.root:  # with --root, FILE (after following any symlink) must be in the repository it attests to
+        try:
+            inside = Path(a.file).resolve().is_relative_to(Path(a.root).resolve())
+        except (OSError, RuntimeError, ValueError):
+            inside = False
+        if not inside:
+            print(f"manifest validate: {redact(a.file)} resolves outside --root; not read", file=sys.stderr)
+            return 1
     try:
         m = json.loads(Path(a.file).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
