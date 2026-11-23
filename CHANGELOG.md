@@ -5,6 +5,11 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Changed (CI, HO-AEC-20261123-ER2R, DEC-270 (7))
+- CI runs the tests on macOS and Windows (Python 3.12) as well as Linux (3.10-3.13). Each job writes its skipped
+  tests, with their reasons, to the job summary, so what a platform doesn't run is stated by CI. The bash demo
+  (`examples/without-spec-kit/run.sh`) now runs in CI on Linux and macOS; on Windows it is a named skip.
+
 ### Added (AEC-R-manifest-validate-impl@7, DEC-256 item 7 follow-up, first slice)
 - `aec manifest validate FILE [--root DIR]` checks a tool manifest against `telosmith.manifest/1.0`
   (`AEC-D-manifest-schema@3`): exact keys in Telosmith-owned objects, every socket key in its empty form, version
