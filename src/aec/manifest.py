@@ -60,6 +60,14 @@ _SECRETS = (
 )
 
 
+def redact(text: str) -> str:
+    """`text` with every credential-shaped part replaced by [redacted]: applied to every problem and note, so no
+    diagnostic repeats a value _scan would refuse (Codex P2 on #110)."""
+    for _, rx in _SECRETS:
+        text = rx.sub("[redacted]", text)
+    return text
+
+
 def _str(v) -> bool:
     return isinstance(v, str) and bool(v.strip())
 
@@ -208,6 +216,14 @@ def _check_skills(items, root, problems) -> None:
         if root is None:
             continue
         folder = Path(root) / s["path"]
+        try:
+            inside = folder.resolve().is_relative_to(Path(root).resolve())
+        except (OSError, RuntimeError):
+            inside = False
+        if not inside:
+            problems.append(f"{w}.path resolves outside the repository (through a symlink); "
+                            "a skill folder must be in the repository")
+            continue
         found = skills.check_skill_dir(folder)
         if found:
             problems.extend(f"{w} ({s['path']}): {p}" for p in found)
@@ -272,7 +288,8 @@ def validate(m, *, root=None) -> tuple[list[str], list[str]]:
             elif rt.get(k) == "unknown":
                 notes.append(f"runtime.{k} is unknown (an honest answer; not established)")
     _scan(m, "manifest", problems)
-    return [p.replace("manifest.", "", 1) if p.startswith("manifest.") else p for p in problems], notes
+    problems = [p.replace("manifest.", "", 1) if p.startswith("manifest.") else p for p in problems]
+    return [redact(p) for p in problems], [redact(n) for n in notes]
 
 
 def add_parser(sub) -> None:
@@ -288,7 +305,7 @@ def cli(a, ap) -> int:
     try:
         m = json.loads(Path(a.file).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        print(f"manifest validate: cannot read {a.file}: {type(exc).__name__}", file=sys.stderr)
+        print(f"manifest validate: cannot read {redact(a.file)}: {type(exc).__name__}", file=sys.stderr)
         return 1
     problems, notes = validate(m, root=Path(a.root) if a.root else None)
     for p in problems:
@@ -297,6 +314,6 @@ def cli(a, ap) -> int:
         print(f"manifest validate: note: {n}")
     if problems:
         return 1
-    print(f"manifest validate: {a.file} is a valid {m['manifest']} manifest"
+    print(f"manifest validate: {redact(a.file)} is a valid {m['manifest']} manifest"
           + ("" if a.root else " (skill folders not checked; pass --root)"))
     return 0

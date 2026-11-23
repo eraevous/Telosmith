@@ -323,6 +323,21 @@ class CollectionSafety(unittest.TestCase):  # MAN-06, validation half
                 run(["manifest", "validate", str(f), "--root", d])
             self.assertFalse(marker.exists())
 
+    def test_secrets_in_notes_and_version_diagnostics_are_not_echoed(self):  # Codex P2 on add4914
+        s = self.SECRETS[0]
+        for mutate in (lambda m: m["sockets"].__setitem__("other", [{"id": s, "kind": "folder", "direction": "in",
+                                                                     "location": "x", "planned": s}]),
+                       lambda m: m.__setitem__("manifest", f"telosmith.manifest/{s}"),
+                       lambda m: m["sockets"].__setitem__("skills", [{"path": f"skills/{s}", "name": "x",
+                                                                      "description": "d"}])):
+            with self.subTest(mutate=mutate):
+                m = base()
+                mutate(m)
+                code, out, err = self._cli(m)
+                self.assertEqual(code, 1)
+                self.assertNotIn(s, out + err)
+                self.assertIn("[redacted]", out + err)
+
     def _cli(self, m):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "m.json"
@@ -342,6 +357,22 @@ class Skills(unittest.TestCase):
         m = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         m["sockets"]["skills"][0]["description"] = "something else"
         self.assertTrue(any("description" in p for p in problems(m, root=ROOT)))
+
+    def test_skill_folder_reached_through_a_symlink_outside_root_fails(self):  # Codex P2 on add4914
+        src = ROOT / "examples" / "skills" / "telosmith-records"
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as outside:
+            import shutil
+            shutil.copytree(src, Path(outside) / "telosmith-records")
+            (Path(repo) / "skills").mkdir()
+            (Path(repo) / "skills" / "telosmith-records").symlink_to(Path(outside) / "telosmith-records")
+            m = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+            m["sockets"]["skills"][0]["path"] = "skills/telosmith-records"
+            p = problems(m, root=Path(repo))
+            self.assertTrue(any("outside" in x for x in p), p)
+            # decoy: the same folder copied inside the repository passes
+            (Path(repo) / "skills" / "telosmith-records").unlink()
+            shutil.copytree(src, Path(repo) / "skills" / "telosmith-records")
+            self.assertEqual(problems(m, root=Path(repo)), [])
 
     def test_skill_path_may_not_climb(self):
         m = base()
