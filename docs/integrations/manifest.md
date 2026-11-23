@@ -6,7 +6,8 @@ Status: **decided** (`AEC-D-manifest-schema@3`, accepted). Zach, on Telosmith#10
 7085475083): "Option B is good. The path proposed is acceptable. put network use and model use in v1, with room for
 never, optional, required, and unknown. leave dependency lists to the tool's existing package files rather than
 maintaining a second list." Kate's round-9 records `AEC-R-manifest-*` (`independent`) still apply. DEC-256 item 7,
-handoff HO-AEC-20261119-V8FC. No code ships with this page; `aec manifest build|check` come in a later PR.
+handoff HO-AEC-20261119-V8FC. `aec manifest validate` checks a manifest against this page (below); `aec manifest
+build|check`, which start the server and compare a fresh build, come in a later PR.
 
 ## What it is for
 
@@ -19,7 +20,8 @@ no standard carries yet: the authority declaration (DEC-185) and the sockets tha
 ## The proposal
 
 One JSON file per tool, `telosmith.manifest/1.0`. Worked example: [`examples/manifest/telosmith.manifest.json`](../../examples/manifest/telosmith.manifest.json)
-(Telosmith itself; its `mcp` section is the real `tools/list` output of `aec mcp`).
+(Telosmith itself; its `mcp` section is the real `tools/list` output of `aec mcp` on 2026-11-21, the rest written by
+hand until `aec manifest build` exists).
 
 ```json
 {
@@ -81,6 +83,37 @@ One JSON file per tool, `telosmith.manifest/1.0`. Worked example: [`examples/man
    never, only when the caller turns it on, always, or not established. `unknown` is an honest answer, not a default
    to hide behind; a checker accepts it and lists it. There is no dependency list: the tool's own package files
    (`pyproject.toml`, `package.json` and the like) are the single source, so the manifest can't disagree with them.
+
+## Checking a manifest: `aec manifest validate`
+
+```
+aec manifest validate FILE [--root DIR]
+```
+
+Exit 0 when FILE is a valid `telosmith.manifest/1.0` manifest, else 1 with each problem on stderr. It reads the file
+(and, with `--root`, the skill folders it names) and runs nothing: not the manifest's `mcp.command`, not the
+repository's. It checks rules 1 to 9 as far as a file can show them:
+
+- exact keys in every object Telosmith owns (the envelope, `tool`, `sockets`, the `mcp` and `a2a` wrappers,
+  `listPolicy`, `skills` and `other` entries, `authority`, `runtime`); MCP and A2A objects inside may carry more;
+- every socket key present, in its one empty form; the version is major 1 and a minor this checker knows;
+- the card passes `aec a2a check`, carries the authority extension exactly once (an empty declaration too), and its
+  params equal `sockets.authority`; `protocol` is the placeholder; versions agree; `runtime` values are one of four;
+- each MCP tool has a `name` and an `inputSchema`; each `listPolicy` entry has a non-negative integer `ttlMs` and a
+  non-empty `cacheScope` when present;
+- no credential-shaped string anywhere, keys included (tokens of common shapes, URLs with a password, assignments
+  such as `TOKEN=` or `API_TOKEN="..."`), and no host paths in `command` (an `--option=/abs/path` value included),
+  skill paths or `other` locations; no control characters in skill paths. A problem names where, never the value:
+  text from the file is shown only when it is short and plain (no `=`, quotes, escapes or control characters) and
+  holds nothing credential-shaped, otherwise `[not shown]` (quoted values inside `aec a2a`'s messages too); the
+  version string is never echoed. Patterns can't catch
+  every way to spell a secret, so what's printed doesn't depend on them alone;
+- with `--root`, FILE itself must resolve inside the root (a symlink out is refused before it is read), and each
+  skill folder must too, pass `aec skills check`, and have the manifest's name and description.
+
+Printed as notes, not problems: `other` sockets (transitional), `unknown` runtime answers, and declared grants
+(nothing is granted while the protocol is undecided). Not checked here: whether the file matches what the server and
+builders produce now (rule 3). That is `aec manifest check`.
 
 ## Where it lives
 

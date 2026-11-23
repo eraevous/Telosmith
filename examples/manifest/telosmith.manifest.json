@@ -1,6 +1,5 @@
 {
   "manifest": "telosmith.manifest/1.0",
-  "_doc": "EXAMPLE for the proposal in docs/integrations/manifest.md (AEC-D-manifest-schema@3, accepted). The mcp section was produced by running `aec mcp` on 2026-11-21 (tools/list verbatim); the rest was written by hand because `aec manifest build` doesn't exist yet.",
   "tool": {
     "id": "telosmith",
     "name": "Telosmith",
@@ -91,7 +90,7 @@
       {
         "path": "examples/skills/telosmith-records",
         "name": "telosmith-records",
-        "description": "Read and check a Telosmith-based repository's purpose, requirement and decision records (.aec/records.jsonl) before changing code."
+        "description": "Read and check a Telosmith-based repository's purpose, requirement and decision records (.aec/records.jsonl) before changing code. Use when a repository has an .aec/ folder and the task touches code a record anchors, or when asked what a module is for or whether a change drifts from its purpose."
       }
     ],
     "authority": {
