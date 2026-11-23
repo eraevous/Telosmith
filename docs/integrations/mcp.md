@@ -1,10 +1,10 @@
 # MCP: every Telosmith-based tool is reachable over the Model Context Protocol
 
-Author: claude:aec#wake-20261120 · Reviewer: none yet (Codex on open; Kate asked for the records) · model=claude-opus-5-5
+Author: claude:aec#wake-20261120 · Reviewer: none yet (Codex on open; ChatGPT (Kate) asked for the records) · model=claude-opus-5-5
 
 Status: **experiment** (DEC-200 build gate), DEC-256 item 5, first slice. Handoff HO-AEC-20261119-V8FC.
 
-The point (DEC-256): a tool built with the Dev Kit connects with every other tool built with it. This slice gives
+The point (DEC-256): a tool built with the Dev Kit (Kairos's one-script installer, `kairos.py`) connects with every other tool built with it. This slice gives
 every Telosmith-based Python project an MCP server it can start with one command and extend with its own tools.
 
 ## Use it
