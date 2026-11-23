@@ -201,6 +201,17 @@ class Write(Case):
         self.assertTrue(text.startswith(OWN.rstrip("\n") + "\n\n" + agents.BEGIN))
         self.assertEqual(self.agents("check")[0], 0)
 
+    def test_append_keeps_existing_bytes_verbatim(self):
+        # Copilot on #101: trailing blank lines and whitespace-only files were trimmed
+        for before, sep in (("# Repo\n\n\n\n", ""), ("# Repo", "\n\n"), ("# Repo\n", "\n"),
+                            ("  \n\t\n", "\n"), ("# Repo\r\n", "\n")):
+            with self.subTest(before=before):
+                self.md.write_bytes(before.encode("utf-8"))
+                self.assertEqual(self.agents("write", "--append")[0], 0)
+                text = self.md.read_bytes().decode("utf-8")
+                self.assertEqual(text, before + sep + agents.render(config.own(self.root)))
+                self.assertEqual(self.agents("check")[0], 0)
+
     def test_missing_file_is_refused_unless_append(self):
         self.assertEqual(self.agents("write")[0], 1)
         self.assertFalse(self.md.exists())
@@ -284,7 +295,8 @@ class Safety(Case):
         self.assertEqual(list(outside.iterdir()), [])
 
     def test_file_outside_the_repository_is_refused(self):
-        for bad in ("../AGENTS.md", str(Path(self._tmp.name) / "x.md"), " AGENTS.md"):
+        for bad in ("../AGENTS.md", str(Path(self._tmp.name) / "x.md"), " AGENTS.md",
+                    "\\AGENTS.md", "D:AGENTS.md", "C:\\x\\AGENTS.md", "sub\\..\\..\\AGENTS.md"):   # Copilot on #101
             with self.subTest(bad=bad):
                 code, _, err = self.agents("write", "--append", "--file", bad)
                 self.assertEqual(code, 1)

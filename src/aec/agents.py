@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from .config import Config, ConfigError, own
 
@@ -137,7 +137,11 @@ def updated(text: str | None, block: str, path: Path, append: bool) -> str:
         if not append:
             raise AgentsError(f"{path}: has no telosmith:agents markers; add them where the block belongs, "
                               "or use --append to add the block at the end")
-        return text.rstrip("\n") + "\n\n" + block if text.strip() else block
+        if not text:
+            return block
+        # bytes outside the block stay verbatim (Copilot on #101): only a separator is added before it
+        sep = "" if text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n"
+        return text + sep + block
     before, _, after = parts
     return before + block + after
 
@@ -187,7 +191,9 @@ def cli(a, ap) -> int:
         sys.stdout.write(block)
         return 0
     rel = Path(a.file)
-    if rel.is_absolute() or ".." in rel.parts or a.file != a.file.strip():
+    win = PureWindowsPath(a.file)   # `\AGENTS.md` or `D:AGENTS.md` are anchored on Windows though not absolute (Copilot on #101)
+    if (rel.is_absolute() or rel.anchor or win.anchor or ".." in rel.parts or ".." in win.parts
+            or a.file != a.file.strip()):
         print(f"agents: --file must be a relative path inside the repository, got {a.file!r}", file=sys.stderr)
         return 1
     root = Path(a.repo)
