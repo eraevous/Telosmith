@@ -190,8 +190,8 @@ def _check_mcp(mcp, tool_version, problems) -> None:
             problems.append(f"{w}.tools[{i}] needs a name and an inputSchema object (MCP Tool)")
     pol = mcp.get("listPolicy")
     if _keys(pol, MCP_LISTS, f"{w}.listPolicy", problems, required=False):
-        for lst, p in pol.items():
-            pw = f"{w}.listPolicy.{lst}"
+        for lst in (k for k in MCP_LISTS if k in pol):  # unknown keys were reported (unnamed) by _keys
+            p, pw = pol[lst], f"{w}.listPolicy.{lst}"
             if not _keys(p, POLICY_KEYS, pw, problems, required=False):
                 continue
             ttl = p.get("ttlMs")
@@ -267,7 +267,7 @@ def _check_skills(items, root, problems) -> None:
             continue
         found = skills.check_skill_dir(folder)
         if found:
-            problems.extend(f"{w} ({_echo(s['path'])}): {p}" for p in found)
+            problems.extend(f"{w} ({_echo(s['path'])}): {_scrub(p)}" for p in found)
             continue
         fm, _, _ = skills.parse_skill_md((folder / skills.SKILL_FILE).read_text(encoding="utf-8"))
         for k in ("name", "description"):
@@ -291,7 +291,7 @@ def _check_other(items, problems, notes) -> None:
             problems.append(f"{w}.direction must be 'in' or 'out'")
         if _host_path(o["location"]):
             problems.append(f"{w}.location is a host path; give it relative to the repository")
-        notes.append(f"{w} '{_echo(o['id'])}' is transitional ({_echo(o['kind'])}, {o['direction']}); planned: "
+        notes.append(f"{w} '{_echo(o['id'])}' is transitional ({_echo(o['kind'])}, {_echo(o['direction'])}); planned: "
                      f"{_echo(o['planned']) if o['planned'] else 'not named'}")
 
 

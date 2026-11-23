@@ -431,6 +431,51 @@ class CollectionSafety(unittest.TestCase):  # MAN-06, validation half
         self.assertNotIn("abc", out + err)
         self.assertNotIn("123", out + err)
 
+    def test_no_position_in_the_file_can_put_a_value_in_the_output(self):
+        # Every string value and every key of a fully populated manifest, replaced in turn by values that the
+        # patterns catch only partly or not at all (Codex on ebbf31b found two such positions by hand).
+        full = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        full["sockets"]["mcp"]["listPolicy"] = {"tools": {"ttlMs": 1, "cacheScope": "server"}}
+        full["sockets"]["a2a"] = {"agentCard": card(version=full["tool"]["version"],
+                                                    authority={k: full["sockets"]["authority"][k]
+                                                               for k in a2a.AUTHORITY_KEYS})}
+        full["sockets"]["other"] = [{"id": "inbox", "kind": "folder", "direction": "in", "location": "content/",
+                                     "planned": "MCP resource"}]
+        self.assertEqual(problems(full, root=ROOT), [])
+
+        def positions(v, path=()):
+            if isinstance(v, dict):
+                for k, x in v.items():
+                    yield ("key", path, k)
+                    yield from positions(x, path + (k,))
+            elif isinstance(v, list):
+                for i, x in enumerate(v):
+                    yield from positions(x, path + (i,))
+            elif isinstance(v, str):
+                yield ("value", path, None)
+
+        def put(m, kind, path, key, secret):
+            parent = m
+            for step in path[:-1] if kind == "value" else path:
+                parent = parent[step]
+            if kind == "value":
+                parent[path[-1]] = secret
+            else:
+                parent[secret] = parent.pop(key)
+
+        secrets = ['API_TOKEN=""abc123', "x=abc123 'q\"abc123'", "ghp_" + "abc123" * 6]
+        checked = 0
+        for kind, path, key in list(positions(full)):
+            for secret in secrets:
+                m = copy.deepcopy(full)
+                put(m, kind, path, key, secret)
+                for root in (None, ROOT):
+                    errs, notes = manifest.validate(m, root=root)
+                    text = "\n".join(errs + notes)
+                    self.assertNotIn("abc123", text, f"{kind} at {path} {key!r} with {secret[:10]}")
+                    checked += 1
+        self.assertGreater(checked, 500)
+
     def _cli(self, m):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "m.json"
