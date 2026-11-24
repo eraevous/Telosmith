@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import unittest
 
-from _platform import BASH, NO_BASH
+from _platform import BASH, NO_BASH, bash_native
 
 from aec.init import HOOK_COMMAND
 
@@ -83,7 +83,7 @@ class HookSafePathTests(unittest.TestCase):
             self.assertFalse(marker.exists(), "the hook imported aec from the checkout via PYTHONPATH")
             self.assertTrue(seen["file"].startswith(outside), seen)
             self.assertEqual(seen["pythonpath"], outside, "only entries outside the checkout survive")
-            self.assertEqual(seen["cwd"], "/")
+            self.assertEqual(os.path.normpath(seen["cwd"]), bash_native("/"))  # Git Bash: / is its install dir
 
     def test_relative_pythonpath_resolves_from_the_project(self):
         # Codex on Fathom#49 / MtG#46 (hook e019ae40): a relative entry meant the project, where the hook
@@ -174,7 +174,7 @@ class HookSafePathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = pathlib.Path(tmp).resolve()
             for value, expected in (("records", f"{project}/records"), ("  ../recs", f"{project}/../recs"),
-                                    ("/abs/records", "/abs/records"), ("", "")):
+                                    ("/abs/records", bash_native("/abs/records", "-m")), ("", "")):
                 seen, _ = self._probe(project, {"PYTHONPATH": "{outside}", "RELAYKIT_RECORDS": value})
                 self.assertEqual(seen["records"], expected, value)
             seen, _ = self._probe(project, {"PYTHONPATH": "{outside}"})

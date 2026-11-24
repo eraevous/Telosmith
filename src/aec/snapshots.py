@@ -107,6 +107,10 @@ def materialize(root, revision, destination):
     return sha, prefix or '.', skipped
 
 
+def _blob_id(algorithm, raw):
+    return hashlib.new(algorithm, b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+
+
 def working_state(root, head, seen=None):
     """Compare raw Git blobs/index/files without status, filters, hooks or refresh."""
     seen = set() if seen is None else seen
@@ -137,6 +141,10 @@ def working_state(root, head, seen=None):
     if indexed != committed or git(root, 'ls-files', '--others', '--exclude-standard', '-z', '--', '.'):
         return True, prefix or '.'
     algorithm = git(root, 'rev-parse', '--show-object-format').decode().strip()
+    # core.autocrlf (Git for Windows defaults it to true) checks text out with CRLF over LF blobs; Git
+    # calls such a file clean, and so does this, without running any filter (AEC-R10 on Windows, #111).
+    autocrlf = (git(root, 'config', '--get', 'core.autocrlf', optional=True) or b'').decode().strip().lower()
+    crlf = autocrlf in ('true', 'yes', 'on', '1', 'input')
     base = Path(root).resolve()
     for name, (mode, oid) in committed.items():
         path = base / name
@@ -161,8 +169,9 @@ def working_state(root, head, seen=None):
                 raw = path.read_bytes()
                 if os.name != 'nt' and bool(path.stat().st_mode & 0o111) != (mode == '100755'):
                     return True, prefix or '.'
-            digest = hashlib.new(algorithm, b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
-            if digest != oid:
+            if _blob_id(algorithm, raw) != oid and not (
+                    crlf and mode != '120000' and b'\r\n' in raw and b'\0' not in raw
+                    and _blob_id(algorithm, raw.replace(b'\r\n', b'\n')) == oid):
                 return True, prefix or '.'
         except (OSError, RuntimeError):
             return True, prefix or '.'

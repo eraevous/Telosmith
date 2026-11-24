@@ -82,6 +82,18 @@ class TestRevisionSnapshots(History):
         (plain/'one.py').write_text('X=1\n')
         self.assertIsNone(E.snapshot(plain)['header']['base_revision'])
 
+    def test_autocrlf_checkout_is_clean_and_other_crlf_edits_are_dirty(self):
+        # Git for Windows checks text out with CRLF (core.autocrlf=true) over LF blobs; Git calls that
+        # clean, so a snapshot must too (AEC-R10; Telosmith #111). Without autocrlf, CRLF is an edit.
+        p=self.root/'src/a/x.py'
+        p.write_bytes(p.read_bytes().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))
+        for value,dirty in (('true',False),('input',False),('false',True)):
+            git(self.root,'config','core.autocrlf',value)
+            self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,value)
+        git(self.root,'config','core.autocrlf','true')
+        p.write_bytes(p.read_bytes()+b'# edited\r\n')
+        self.assertTrue(E.snapshot(self.root)['header']['dirty'],'a real edit under autocrlf')
+
     def test_method_configuration_and_legacy_mismatch(self):
         original=E.snapshot(self.root)
         ignored=E.snapshot(self.root,ignore={'bad.py'})

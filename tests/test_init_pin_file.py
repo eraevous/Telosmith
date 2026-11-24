@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import aec.init as I  # noqa: E402
 from aec.init import init  # noqa: E402
 from aec.pin import PinError, read_pin  # noqa: E402
+from _platform import readlink  # noqa: E402
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 OTHER = "fedcba9876543210fedcba9876543210fedcba98"
@@ -100,7 +101,7 @@ class InitPinFile(unittest.TestCase):
         os.symlink(target, self.root / PIN)
         rep = self._init(hook_style="line")
         self.assertEqual(target.read_text(), theirs)
-        self.assertEqual(os.readlink(self.root / PIN), str(target))
+        self.assertEqual(readlink(self.root / PIN), str(target))
         self.assertIn("tools/aec_upstream.json", rep["kept"])
         self.assertIn("already existed and was kept", rep["next_steps"])
 
