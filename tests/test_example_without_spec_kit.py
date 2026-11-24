@@ -17,7 +17,7 @@ EXPECTED_TXT = DEMO_DIR / "expected.txt"
 def normalize_output(text: str) -> str:
     """Replace ephemeral commit hashes and temp paths with fixed placeholders."""
     text = text.replace("\r\n", "\n")
-    text = re.sub(r"vs [0-9a-f]{40}", "vs <SHA40>", text)
+    text = re.sub(r"vs [0-9a-f]{40,64}", "vs <SHA40>", text)
     text = re.sub(r"origin/main \([0-9a-f]{7,12}\)", "origin/main (<SHA8>)", text)
     text = re.sub(r"content at [0-9a-f]{7,12};", "content at <SHA8>;", text)
     text = re.sub(r"/tmp/[^\s]+", "<TMP_PATH>", text)
@@ -32,6 +32,8 @@ class ExampleWithoutSpecKitTest(unittest.TestCase):
             self.skipTest("bash is not available on PATH")
 
         env = os.environ.copy()
+        env.pop("TELOSMITH_BLOCK", None)
+        env.pop("TELOSMITH_BASE", None)
         env["PYTHONPATH"] = str(ROOT / "src")
         py_bin = str(Path(sys.executable).parent)
         env["PATH"] = py_bin + os.pathsep + env.get("PATH", "")
