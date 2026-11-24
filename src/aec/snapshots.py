@@ -197,7 +197,9 @@ def _looks_binary(raw):
                 return True
         elif c == 0:
             return True
-        elif c == 127 or (c < 32 and c not in (8, 9, 10, 12, 27)):
+        elif c == 10:
+            continue  # line endings count as neither printable nor not (Git's gather_stats)
+        elif c == 127 or (c < 32 and c not in (8, 9, 12, 27)):
             nonprintable += 1
         else:
             printable += 1
@@ -223,8 +225,8 @@ def _line_endings_converted(root, entries, autocrlf):
             return False  # -text, binary or -crlf: Git compares bytes, so a CRLF edit is an edit
         if any(a.get(k, 'unspecified') not in ('unspecified', 'unset') for k in ('working-tree-encoding', 'filter', 'ident')):
             return False  # another clean transform applies; stay dirty rather than guess it (Codex on #111)
-        if text == 'set' or legacy in ('set', 'input'):
-            continue  # forced text: converted whatever the content
+        if text == 'set' or (text == 'unspecified' and legacy in ('set', 'input')):
+            continue  # forced text: converted whatever the content (legacy crlf only when text is unspecified)
         if not (autocrlf or text == 'auto' or eol in ('crlf', 'lf')) or _looks_binary(raw):
             return False  # automatic conversion (autocrlf, text=auto, eol alone) skips binary-looking files
     return True

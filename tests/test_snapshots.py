@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT/'src'))
 from aec import edges as E
+from aec import snapshots as E_snapshots  # noqa: E402
 from aec.__main__ import main
 
 
@@ -119,6 +120,13 @@ class TestRevisionSnapshots(History):
             p.write_bytes(lf.replace(b'\n',b'\r\n'))
             self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,(rule,autocrlf))
 
+    def test_binary_heuristic_does_not_count_line_feeds_as_printable(self):
+        # Codex on #111: one control byte and 128 LFs is binary to Git, so autocrlf leaves it alone.
+        self.assertTrue(E_snapshots._looks_binary(b'\x01'+b'\n'*128))
+        self.assertTrue(E_snapshots._looks_binary(b'\x01'+b'\r\n'*128))
+        self.assertFalse(E_snapshots._looks_binary(b'\x01'+b'a'*128+b'\r\n'))
+        self.assertFalse(E_snapshots._looks_binary(b'plain text\r\nmore\n'))
+
     def test_automatic_crlf_conversion_skips_binary_looking_content(self):
         # Codex on #111: autocrlf and text=auto leave a file with a lone CR (or many control bytes) alone,
         # as Git does, so a CRLF edit to it is an edit; forced `text` still converts it.
@@ -130,7 +138,9 @@ class TestRevisionSnapshots(History):
             if name and name!='odd.dat' and b'\0' not in g.read_bytes():
                 g.write_bytes(g.read_bytes().replace(b'\r\n',b'\n'))
         f.write_bytes(b'abc\rdef\r\n')
-        for rule,autocrlf,dirty in (('','true',True),('*.dat text=auto','false',True),('*.dat text','false',False)):
+        for rule,autocrlf,dirty in (('','true',True),('*.dat text=auto','false',True),
+                                    ('*.dat text=auto crlf','false',True),  # text wins over legacy crlf
+                                    ('*.dat text','false',False)):
             (self.root/'.gitattributes').write_bytes((rule+'\n').encode())  # LF on every OS
             git(self.root,'add','.gitattributes');git(self.root,'commit','-qm','attr '+rule)
             git(self.root,'config','core.autocrlf',autocrlf)
