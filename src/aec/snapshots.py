@@ -208,7 +208,7 @@ def _line_endings_converted(root, entries, autocrlf):
     """True when Git converts line endings for every (name, raw) entry: attributes from check-attr
     (no filter runs), and Git's binary heuristic wherever conversion is automatic rather than forced."""
     names = [name for name, _ in entries]
-    out = git(root, 'check-attr', '-z', '--stdin', 'text', 'eol', 'crlf',
+    out = git(root, 'check-attr', '-z', '--stdin', 'text', 'eol', 'crlf', 'working-tree-encoding', 'filter', 'ident',
               input=b''.join(os.fsencode(n) + b'\0' for n in names), optional=True)
     if out is None:
         return False
@@ -221,6 +221,8 @@ def _line_endings_converted(root, entries, autocrlf):
         text, eol, legacy = a.get('text', 'unspecified'), a.get('eol', 'unspecified'), a.get('crlf', 'unspecified')
         if text == 'unset' or legacy == 'unset':
             return False  # -text, binary or -crlf: Git compares bytes, so a CRLF edit is an edit
+        if any(a.get(k, 'unspecified') not in ('unspecified', 'unset') for k in ('working-tree-encoding', 'filter', 'ident')):
+            return False  # another clean transform applies; stay dirty rather than guess it (Codex on #111)
         if text == 'set' or legacy in ('set', 'input'):
             continue  # forced text: converted whatever the content
         if not (autocrlf or text == 'auto' or eol in ('crlf', 'lf')) or _looks_binary(raw):

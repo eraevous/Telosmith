@@ -102,7 +102,10 @@ class TestRevisionSnapshots(History):
         attributes=self.root/'.gitattributes'
         for rule,autocrlf,dirty in (('*.py -text','true',True),('*.py binary','input',True),
                                     ('*.py -crlf','true',True),('*.py text','false',False),
-                                    ('*.py eol=crlf','false',False),('*.txt -text','true',False)):
+                                    ('*.py eol=crlf','false',False),('*.txt -text','true',False),
+                                    # other clean transforms: stay dirty, never run or emulate them
+                                    ('*.py text working-tree-encoding=ISO-8859-1','false',True),
+                                    ('*.py text ident','false',True),('*.py text filter=none','false',True)):
             attributes.write_bytes((rule+'\n').encode())  # LF: write_text gives CRLF on Windows
             git(self.root,'add','.gitattributes');git(self.root,'commit','-qm',rule)
             git(self.root,'config','core.autocrlf',autocrlf)
