@@ -20,6 +20,12 @@ def index_url() -> str:
     return os.environ.get("PIP_INDEX_URL") or "https://pypi.org/simple/"
 
 
+def redact(url: str) -> str:
+    """`url` with any user:password@ (or token@) part replaced by ***@, so a diagnostic never prints a credential."""
+    import re
+    return re.sub(r"(?<=://)[^/@\s]+@", "***@", url)
+
+
 def index_unreachable(url: str | None = None, timeout: float = 5.0) -> str | None:
     """None if the package index answers within `timeout` seconds, else a one-line reason.
 
@@ -34,7 +40,7 @@ def index_unreachable(url: str | None = None, timeout: float = 5.0) -> str | Non
     except urllib.error.HTTPError:
         return None
     except (urllib.error.URLError, OSError, ValueError) as e:
-        return f"{type(e).__name__}: {getattr(e, 'reason', e)}"
+        return redact(f"{type(e).__name__}: {getattr(e, 'reason', e)}")
 
 
 def install_skip_reason() -> str | None:
@@ -49,7 +55,7 @@ def install_skip_reason() -> str | None:
         return None
     why = index_unreachable()
     if why:
-        return f"{NETWORK_SKIP}: package index {index_url()} unreachable ({why})"
+        return f"{NETWORK_SKIP}: package index {redact(index_url())} unreachable ({why})"
     return None
 
 
@@ -124,6 +130,17 @@ class TestInstallSkip(unittest.TestCase):
         finally:
             srv.shutdown()
             srv.server_close()
+
+    def test_skip_reason_never_prints_index_credentials(self):
+        os.environ["PIP_INDEX_URL"] = "http://alice:s3cret-tok@127.0.0.1:9/simple/"
+        os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1"
+        why = install_skip_reason()
+        self.assertIsNotNone(why)
+        self.assertNotIn("s3cret-tok", why)
+        self.assertNotIn("alice", why)
+        self.assertIn("***@127.0.0.1:9", why)
+        self.assertEqual(redact("https://tok@host/x"), "https://***@host/x")
+        self.assertEqual(redact("https://pypi.org/simple/"), "https://pypi.org/simple/")
 
     def test_ci_never_skips_for_network(self):
         os.environ["PIP_INDEX_URL"] = "http://127.0.0.1:9/simple/"
