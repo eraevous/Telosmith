@@ -103,7 +103,7 @@ class TestRevisionSnapshots(History):
         for rule,autocrlf,dirty in (('*.py -text','true',True),('*.py binary','input',True),
                                     ('*.py -crlf','true',True),('*.py text','false',False),
                                     ('*.py eol=crlf','false',False),('*.txt -text','true',False)):
-            attributes.write_text(rule+'\n')
+            attributes.write_bytes((rule+'\n').encode())  # LF: write_text gives CRLF on Windows
             git(self.root,'add','.gitattributes');git(self.root,'commit','-qm',rule)
             git(self.root,'config','core.autocrlf',autocrlf)
             # Blob form on disk for every tracked file: a Windows checkout and write_text wrote CRLF,
@@ -128,10 +128,9 @@ class TestRevisionSnapshots(History):
                 g.write_bytes(g.read_bytes().replace(b'\r\n',b'\n'))
         f.write_bytes(b'abc\rdef\r\n')
         for rule,autocrlf,dirty in (('','true',True),('*.dat text=auto','false',True),('*.dat text','false',False)):
-            (self.root/'.gitattributes').write_text(rule+'\n')
+            (self.root/'.gitattributes').write_bytes((rule+'\n').encode())  # LF on every OS
             git(self.root,'add','.gitattributes');git(self.root,'commit','-qm','attr '+rule)
             git(self.root,'config','core.autocrlf',autocrlf)
-            (self.root/'.gitattributes').write_bytes((rule+'\n').encode())
             self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,(rule,autocrlf))
 
     def test_method_configuration_and_legacy_mismatch(self):
