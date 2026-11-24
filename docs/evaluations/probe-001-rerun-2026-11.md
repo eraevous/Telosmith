@@ -136,6 +136,10 @@ Per-trial cost (11-24):
   `tools/grade.py` measured on a clean copy.
 - **Reports.** 16 of 18 agents wrote `REPORT.md`; two (R697, R703) were refused by the harness and their
   reports were recovered from the final message (marked at the top), as on 11-01.
+  After grading, `tools/transcript.py` (the 11-01 script) overwrote R703's recovered report with an interim
+  message ("Tests hung; …"), the same bug 11-01 hit on P902. The published file was restored to the exact
+  text the grader saw (byte-identical to the grader's copy); Codex caught the mismatch on #115.
+  `tools/transcript.py` now leaves an existing recovered report alone.
 - **Tool calls include the hand-back call** each subagent now makes at the end (+1 in every trial, all
   arms). Absolute token counts differ from 11-01 for the same harness reason.
 - **Blinding.** As on 11-01, a reader can tell A from B/C: B and C reports mention the briefing. The

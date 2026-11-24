@@ -40,6 +40,6 @@ for line in Path("/root/.cache/p001r-sealed/agents.tsv").read_text().split("\n")
     s = {"trial": tid, "tool_calls": len(calls), "calls": calls, "usage": usage, "complete": bool(final)}
     (ROOT / tid / "transcript_summary.json").write_text(json.dumps(s, indent=1))
     rep = ROOT / tid / "REPORT.md"
-    if final and (not rep.exists() or rep.read_text().startswith("<!-- recovered")):
+    if final and not rep.exists():
         rep.write_text("<!-- recovered from the agent's final message; it could not write this file itself -->\n" + final)
     print(tid, len(calls), usage["output"], "final" if final else "running")
