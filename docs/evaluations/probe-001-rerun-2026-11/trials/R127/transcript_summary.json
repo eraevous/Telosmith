@@ -1,0 +1,37 @@
+{
+ "trial": "R127",
+ "tool_calls": 6,
+ "calls": [
+  [
+   "Read",
+   "/home/claude/probe/trials/R127/prompt.md"
+  ],
+  [
+   "Bash",
+   "cd /home/claude/probe/trials/R127/repo && git log --oneline 2>/dev/null | head; find . -name \"*.py\" -not -path \"./.git/*\" | head -50; cat src/connectors/credentials.py; grep -rn \"credentials\" --includ"
+  ],
+  [
+   "Bash",
+   "cd /home/claude/probe/trials/R127/repo && sed -n 50,70p src/cli.py; python3 -m pytest -q 2>&1 | tail -5; git status --short"
+  ],
+  [
+   "Bash",
+   "cd /home/claude/probe/trials/R127/repo && timeout 60 python3 -m pytest -q tests/test_credentials.py 2>&1 | tail -3; git status --short"
+  ],
+  [
+   "Bash",
+   "cat > /home/claude/probe/trials/R127/REPORT.md <<'EOF'\n# R127 report\n\n**Changed: nothing.** I did not delete `src/connectors/credentials.py` or `tests/test_credentials.py`.\n\n**Why:** the module is not"
+  ],
+  [
+   "SubagentHandback",
+   ""
+  ]
+ ],
+ "usage": {
+  "input": 16,
+  "output": 2114,
+  "cache_read": 359521,
+  "cache_write": 58894
+ },
+ "complete": true
+}
