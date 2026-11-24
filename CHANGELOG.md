@@ -5,6 +5,12 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Fixed (HO-AEC-20261124-HMM6, newcomer friction reported in #114)
+- The install test (`tests/test_install.py`) skips with "needs internet: package index … unreachable" when a short
+  probe can't reach the index pip would use, instead of failing offline. Under CI (`CI` set) it never skips for the
+  network. `tools/preflight.py` prints such skips on their own summary line, so an offline first run reads
+  "1 test skipped: needs internet", not a red test.
+
 ### Added (AEC-R-manifest-validate-impl@7, DEC-256 item 7 follow-up, first slice)
 - `aec manifest validate FILE [--root DIR]` checks a tool manifest against `telosmith.manifest/1.0`
   (`AEC-D-manifest-schema@3`): exact keys in Telosmith-owned objects, every socket key in its empty form, version
