@@ -1,5 +1,6 @@
 """T029 / FR-009: the package installs into a clean venv and runs; only `aec` is shipped (T028)."""
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,7 +23,6 @@ def index_url() -> str:
 
 def redact(url: str) -> str:
     """`url` with any user:password@ (or token@) part replaced by ***@, so a diagnostic never prints a credential."""
-    import re
     return re.sub(r"(?<=://)[^/@\s]+@", "***@", url)
 
 
@@ -33,7 +33,9 @@ def index_unreachable(url: str | None = None, timeout: float = 5.0) -> str | Non
     index the install test can only fail. Any HTTP answer (even an error status) counts as reachable: the
     network path works, and a real index problem should still show up as a failing install.
     """
-    url = url or index_url()
+    # Probe without the user:password@ part: urllib doesn't take credentials from the URL (it would try to resolve
+    # "user:pw@host" as a host name), and a 401 from the index still proves the network path works.
+    url = re.sub(r"(?<=://)[^/@\s]+@", "", url or index_url())
     try:
         with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=timeout):
             return None
@@ -141,6 +143,30 @@ class TestInstallSkip(unittest.TestCase):
         self.assertIn("***@127.0.0.1:9", why)
         self.assertEqual(redact("https://tok@host/x"), "https://***@host/x")
         self.assertEqual(redact("https://pypi.org/simple/"), "https://pypi.org/simple/")
+
+    def test_index_with_credentials_is_probed_without_them(self):
+        import http.server
+        import threading
+        seen = []
+
+        class Auth(http.server.BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                seen.append(self.path)
+                self.send_response(401)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Auth)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            os.environ["PIP_INDEX_URL"] = f"http://alice:tok@127.0.0.1:{srv.server_port}/simple/"
+            os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1"
+            self.assertIsNone(install_skip_reason())  # reachable: a 401 is an answer
+            self.assertEqual(seen, ["/simple/"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
 
     def test_ci_never_skips_for_network(self):
         os.environ["PIP_INDEX_URL"] = "http://127.0.0.1:9/simple/"
