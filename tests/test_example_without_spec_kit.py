@@ -34,6 +34,8 @@ class ExampleWithoutSpecKitTest(unittest.TestCase):
         env = os.environ.copy()
         env.pop("TELOSMITH_BLOCK", None)
         env.pop("TELOSMITH_BASE", None)
+        env["GIT_CONFIG_GLOBAL"] = os.devnull
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
         env["PYTHONPATH"] = str(ROOT / "src")
         py_bin = str(Path(sys.executable).parent)
         env["PATH"] = py_bin + os.pathsep + env.get("PATH", "")
