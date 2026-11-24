@@ -141,10 +141,13 @@ def working_state(root, head, seen=None):
     if indexed != committed or git(root, 'ls-files', '--others', '--exclude-standard', '-z', '--', '.'):
         return True, prefix or '.'
     algorithm = git(root, 'rev-parse', '--show-object-format').decode().strip()
-    # core.autocrlf (Git for Windows defaults it to true) checks text out with CRLF over LF blobs; Git
-    # calls such a file clean, and so does this, without running any filter (AEC-R10 on Windows, #111).
+    # core.autocrlf (Git for Windows defaults it to true) or a text/eol attribute checks text out with
+    # CRLF over LF blobs; Git calls such a file clean, and so does this, without running any filter
+    # (AEC-R10 on Windows, #111). A file whose attributes turn conversion off (-text, binary, -crlf)
+    # keeps byte-exact comparison (Codex on #111).
     autocrlf = (git(root, 'config', '--get', 'core.autocrlf', optional=True) or b'').decode().strip().lower()
     crlf = autocrlf in ('true', 'yes', 'on', '1', 'input')
+    crlf_only = []
     base = Path(root).resolve()
     for name, (mode, oid) in committed.items():
         path = base / name
@@ -169,13 +172,37 @@ def working_state(root, head, seen=None):
                 raw = path.read_bytes()
                 if os.name != 'nt' and bool(path.stat().st_mode & 0o111) != (mode == '100755'):
                     return True, prefix or '.'
-            if _blob_id(algorithm, raw) != oid and not (
-                    crlf and mode != '120000' and b'\r\n' in raw and b'\0' not in raw
-                    and _blob_id(algorithm, raw.replace(b'\r\n', b'\n')) == oid):
-                return True, prefix or '.'
+            if _blob_id(algorithm, raw) != oid:
+                if (mode != '120000' and b'\r\n' in raw and b'\0' not in raw
+                        and _blob_id(algorithm, raw.replace(b'\r\n', b'\n')) == oid):
+                    crlf_only.append(name)  # clean only if Git converts this file's line endings
+                else:
+                    return True, prefix or '.'
         except (OSError, RuntimeError):
             return True, prefix or '.'
+    if crlf_only and not _line_endings_converted(root, crlf_only, crlf):
+        return True, prefix or '.'
     return False, prefix or '.'
+
+
+def _line_endings_converted(root, names, autocrlf):
+    """True when Git's attributes convert line endings for every name (check-attr runs no filter)."""
+    out = git(root, 'check-attr', '-z', '--stdin', 'text', 'eol', 'crlf',
+              input=b''.join(os.fsencode(n) + b'\0' for n in names), optional=True)
+    if out is None:
+        return False
+    fields = out.split(b'\0')
+    attrs = {}
+    for i in range(0, len(fields) - 2, 3):
+        attrs.setdefault(os.fsdecode(fields[i]), {})[fields[i + 1].decode()] = fields[i + 2].decode()
+    for name in names:
+        a = attrs.get(name, {})
+        text, eol, legacy = a.get('text', 'unspecified'), a.get('eol', 'unspecified'), a.get('crlf', 'unspecified')
+        if text == 'unset' or legacy == 'unset':
+            return False  # -text, binary or -crlf: Git compares bytes, so a CRLF edit is an edit
+        if not (autocrlf or text in ('set', 'auto') or eol in ('crlf', 'lf') or legacy in ('set', 'input')):
+            return False
+    return True
 
 
 def snapshot(root, ignore=None, *, rev=None, method=None, source_roots=None):

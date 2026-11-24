@@ -18,10 +18,11 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from _platform import readlink  # noqa: E402
+
 import aec.init as I  # noqa: E402
 from aec.init import init  # noqa: E402
 from aec.pin import PinError, read_pin  # noqa: E402
-from _platform import readlink  # noqa: E402
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 OTHER = "fedcba9876543210fedcba9876543210fedcba98"

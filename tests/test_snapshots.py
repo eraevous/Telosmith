@@ -94,6 +94,23 @@ class TestRevisionSnapshots(History):
         p.write_bytes(p.read_bytes()+b'# edited\r\n')
         self.assertTrue(E.snapshot(self.root)['header']['dirty'],'a real edit under autocrlf')
 
+    def test_crlf_normalization_respects_per_file_attributes(self):
+        # Codex on #111: under autocrlf, a file marked -text (or binary, -crlf) is compared byte for byte,
+        # as Git does; a text/eol attribute converts even without autocrlf.
+        p=self.root/'src/a/x.py'
+        lf=p.read_bytes().replace(b'\r\n',b'\n')
+        attributes=self.root/'.gitattributes'
+        for rule,autocrlf,dirty in (('*.py -text','true',True),('*.py binary','input',True),
+                                    ('*.py -crlf','true',True),('*.py text','false',False),
+                                    ('*.py eol=crlf','false',False),('*.txt -text','true',False)):
+            attributes.write_text(rule+'\n')
+            git(self.root,'add','.gitattributes');git(self.root,'commit','-qm',rule)
+            git(self.root,'config','core.autocrlf',autocrlf)
+            p.write_bytes(lf)
+            self.assertFalse(E.snapshot(self.root)['header']['dirty'],rule)
+            p.write_bytes(lf.replace(b'\n',b'\r\n'))
+            self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,(rule,autocrlf))
+
     def test_method_configuration_and_legacy_mismatch(self):
         original=E.snapshot(self.root)
         ignored=E.snapshot(self.root,ignore={'bad.py'})
