@@ -175,7 +175,7 @@ def working_state(root, head, seen=None):
             if _blob_id(algorithm, raw) != oid:
                 if (mode != '120000' and b'\r\n' in raw and b'\0' not in raw
                         and _blob_id(algorithm, raw.replace(b'\r\n', b'\n')) == oid):
-                    crlf_only.append(name)  # clean only if Git converts this file's line endings
+                    crlf_only.append((name, raw))  # clean only if Git converts this file's line endings
                 else:
                     return True, prefix or '.'
         except (OSError, RuntimeError):
@@ -185,8 +185,29 @@ def working_state(root, head, seen=None):
     return False, prefix or '.'
 
 
-def _line_endings_converted(root, names, autocrlf):
-    """True when Git's attributes convert line endings for every name (check-attr runs no filter)."""
+def _looks_binary(raw):
+    """Git's content heuristic for automatic conversion (convert.c): a lone CR, a NUL, or more than one
+    non-printable byte per 128 printable ones makes a file binary, so `text=auto`/autocrlf leave it alone."""
+    if raw.endswith(b'\x1a'):
+        raw = raw[:-1]  # a trailing DOS end-of-file mark is ignored
+    printable = nonprintable = 0
+    for i, c in enumerate(raw):
+        if c == 13:
+            if raw[i + 1:i + 2] != b'\n':
+                return True
+        elif c == 0:
+            return True
+        elif c == 127 or (c < 32 and c not in (8, 9, 10, 12, 27)):
+            nonprintable += 1
+        else:
+            printable += 1
+    return (printable >> 7) < nonprintable
+
+
+def _line_endings_converted(root, entries, autocrlf):
+    """True when Git converts line endings for every (name, raw) entry: attributes from check-attr
+    (no filter runs), and Git's binary heuristic wherever conversion is automatic rather than forced."""
+    names = [name for name, _ in entries]
     out = git(root, 'check-attr', '-z', '--stdin', 'text', 'eol', 'crlf',
               input=b''.join(os.fsencode(n) + b'\0' for n in names), optional=True)
     if out is None:
@@ -195,13 +216,15 @@ def _line_endings_converted(root, names, autocrlf):
     attrs = {}
     for i in range(0, len(fields) - 2, 3):
         attrs.setdefault(os.fsdecode(fields[i]), {})[fields[i + 1].decode()] = fields[i + 2].decode()
-    for name in names:
+    for name, raw in entries:
         a = attrs.get(name, {})
         text, eol, legacy = a.get('text', 'unspecified'), a.get('eol', 'unspecified'), a.get('crlf', 'unspecified')
         if text == 'unset' or legacy == 'unset':
             return False  # -text, binary or -crlf: Git compares bytes, so a CRLF edit is an edit
-        if not (autocrlf or text in ('set', 'auto') or eol in ('crlf', 'lf') or legacy in ('set', 'input')):
-            return False
+        if text == 'set' or legacy in ('set', 'input'):
+            continue  # forced text: converted whatever the content
+        if not (autocrlf or text == 'auto' or eol in ('crlf', 'lf')) or _looks_binary(raw):
+            return False  # automatic conversion (autocrlf, text=auto, eol alone) skips binary-looking files
     return True
 
 

@@ -116,6 +116,24 @@ class TestRevisionSnapshots(History):
             p.write_bytes(lf.replace(b'\n',b'\r\n'))
             self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,(rule,autocrlf))
 
+    def test_automatic_crlf_conversion_skips_binary_looking_content(self):
+        # Codex on #111: autocrlf and text=auto leave a file with a lone CR (or many control bytes) alone,
+        # as Git does, so a CRLF edit to it is an edit; forced `text` still converts it.
+        f=self.root/'odd.dat'
+        f.write_bytes(b'abc\rdef\n')
+        git(self.root,'add','odd.dat');git(self.root,'commit','-qm','odd')
+        for name in git(self.root,'ls-files','-z').split('\0'):  # blob form (a Windows checkout wrote CRLF)
+            g=self.root/name
+            if name and name!='odd.dat' and b'\0' not in g.read_bytes():
+                g.write_bytes(g.read_bytes().replace(b'\r\n',b'\n'))
+        f.write_bytes(b'abc\rdef\r\n')
+        for rule,autocrlf,dirty in (('','true',True),('*.dat text=auto','false',True),('*.dat text','false',False)):
+            (self.root/'.gitattributes').write_text(rule+'\n')
+            git(self.root,'add','.gitattributes');git(self.root,'commit','-qm','attr '+rule)
+            git(self.root,'config','core.autocrlf',autocrlf)
+            (self.root/'.gitattributes').write_bytes((rule+'\n').encode())
+            self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,(rule,autocrlf))
+
     def test_method_configuration_and_legacy_mismatch(self):
         original=E.snapshot(self.root)
         ignored=E.snapshot(self.root,ignore={'bad.py'})
