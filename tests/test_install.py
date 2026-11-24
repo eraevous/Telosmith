@@ -92,9 +92,11 @@ class TestInstallSkip(unittest.TestCase):
     """The install test skips cleanly offline, and only offline (HO-AEC-20261124-HMM6, Telosmith #114)."""
 
     def setUp(self):
-        keys = ("AEC_SKIP_INSTALL_TEST", "CI", "PIP_INDEX_URL", "NO_PROXY", "no_proxy")
-        self._env = {k: os.environ.get(k) for k in keys}
-        for k in keys[:3]:
+        # The probes here go to loopback only; drop any proxy so a contributor's proxy can't answer for them.
+        proxies = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+        keys = ("AEC_SKIP_INSTALL_TEST", "CI", "PIP_INDEX_URL") + proxies
+        self._env = {k: os.environ.get(k) for k in keys + ("NO_PROXY", "no_proxy")}
+        for k in keys:
             os.environ.pop(k, None)
 
     def tearDown(self):
