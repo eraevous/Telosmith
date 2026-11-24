@@ -106,7 +106,9 @@ class TestRevisionSnapshots(History):
             attributes.write_text(rule+'\n')
             git(self.root,'add','.gitattributes');git(self.root,'commit','-qm',rule)
             git(self.root,'config','core.autocrlf',autocrlf)
-            p.write_bytes(lf)
+            for f in self.root.rglob('*.py'):  # blob form on disk: a Windows checkout wrote CRLF
+                if '.git' not in f.parts:
+                    f.write_bytes(f.read_bytes().replace(b'\r\n',b'\n'))
             self.assertFalse(E.snapshot(self.root)['header']['dirty'],rule)
             p.write_bytes(lf.replace(b'\n',b'\r\n'))
             self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,(rule,autocrlf))
