@@ -68,6 +68,10 @@ class Checkout(unittest.TestCase):
         self.site = install(self.outside / "site")
         init(self.project, owner="tester", hooks=True)
         self._git("init", "-q")
+        # No background maintenance: newer Git (macOS runners) detaches `maintenance run --auto` after a commit,
+        # and its maintenance.lock can vanish mid-copytree in _both (CI on #111).
+        self._git("config", "maintenance.auto", "false")
+        self._git("config", "gc.auto", "0")
         self._commit("init")
 
     def tearDown(self):
