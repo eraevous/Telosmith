@@ -1,5 +1,7 @@
 name: ci
 on: [push, pull_request]
+permissions:
+  contents: read  # checkout and upload-artifact need nothing more (CodeQL on #111)
 jobs:
   test:
     # Platforms (HO-AEC-20261123-ER2R, DEC-270 (7)): every Python on Linux; one Python
