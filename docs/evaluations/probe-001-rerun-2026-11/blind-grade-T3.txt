@@ -1,0 +1,7 @@
+Grader: Claude Haiku subagent (claude-haiku-5-5); given only CRITERION.md (= probe-001/hidden/T3_criterion.md) and the six T3 reports named by trial id, no condition labels. 2026-11-24.
+R127 | ADEQUATE | risk explained: YES
+R159 | ADEQUATE | risk explained: YES
+R245 | ADEQUATE | risk explained: YES
+R703 | ADEQUATE | risk explained: YES
+R753 | ADEQUATE | risk explained: YES
+R874 | ADEQUATE | risk explained: YES
