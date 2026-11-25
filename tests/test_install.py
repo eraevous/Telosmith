@@ -1,17 +1,71 @@
 """T029 / FR-009: the package installs into a clean venv and runs; only `aec` is shipped (T028)."""
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Skip reasons that start with this text mean "this machine is offline", not "this test is broken";
+# tools/preflight.py counts them separately in its summary. Keep the two in step.
+NETWORK_SKIP = "needs internet"
 
-@unittest.skipIf(os.environ.get("AEC_SKIP_INSTALL_TEST"), "install test disabled")
+
+def index_url() -> str:
+    """The package index pip would use: PIP_INDEX_URL if set, else PyPI's simple index."""
+    return os.environ.get("PIP_INDEX_URL") or "https://pypi.org/simple/"
+
+
+def redact(url: str) -> str:
+    """`url` with any user:password@ (or token@) part replaced by ***@, so a diagnostic never prints a credential."""
+    return re.sub(r"(?<=://)[^/@\s]+@", "***@", url)
+
+
+def index_unreachable(url: str | None = None, timeout: float = 5.0) -> str | None:
+    """None if the package index answers within `timeout` seconds, else a one-line reason.
+
+    `pip install .` builds in an isolated environment and fetches setuptools from the index, so without the
+    index the install test can only fail. Any HTTP answer (even an error status) counts as reachable: the
+    network path works, and a real index problem should still show up as a failing install.
+    """
+    # Probe without the user:password@ part: urllib doesn't take credentials from the URL (it would try to resolve
+    # "user:pw@host" as a host name), and a 401 from the index still proves the network path works.
+    url = re.sub(r"(?<=://)[^/@\s]+@", "", url or index_url())
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=timeout):
+            return None
+    except urllib.error.HTTPError:
+        return None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return redact(f"{type(e).__name__}: {getattr(e, 'reason', e)}")
+
+
+def install_skip_reason() -> str | None:
+    """Why the install test should skip here, or None to run it.
+
+    Under CI (the CI variable is set, as on GitHub Actions) it never skips for the network: an unreachable
+    index there is a failure to see, not a newcomer's offline machine.
+    """
+    if os.environ.get("AEC_SKIP_INSTALL_TEST"):
+        return "install test disabled (AEC_SKIP_INSTALL_TEST)"
+    if os.environ.get("CI"):
+        return None
+    why = index_unreachable()
+    if why:
+        return f"{NETWORK_SKIP}: package index {redact(index_url())} unreachable ({why})"
+    return None
+
+
 class TestInstall(unittest.TestCase):
     def test_pip_install_and_run(self):
+        why = install_skip_reason()
+        if why:
+            self.skipTest(why)
         d = Path(tempfile.mkdtemp())
         subprocess.run([sys.executable, "-m", "venv", str(d / "v")], check=True)
         py = d / "v" / ("Scripts" if os.name == "nt" else "bin") / "python"
@@ -32,6 +86,100 @@ class TestInstall(unittest.TestCase):
             self.assertEqual(r.stdout.strip(), f"{name} {mod.__version__}")
         r = subprocess.run([str(py), "-c", "import core"], capture_output=True, text=True, cwd=d)
         self.assertNotEqual(r.returncode, 0, "legacy top-level 'core' package must not be installed")
+
+
+class TestInstallSkip(unittest.TestCase):
+    """The install test skips cleanly offline, and only offline (HO-AEC-20261124-HMM6, Telosmith #114)."""
+
+    def setUp(self):
+        # The probes here go to loopback only; drop any proxy so a contributor's proxy can't answer for them.
+        proxies = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+        keys = ("AEC_SKIP_INSTALL_TEST", "CI", "PIP_INDEX_URL") + proxies
+        self._env = {k: os.environ.get(k) for k in keys + ("NO_PROXY", "no_proxy")}
+        for k in keys:
+            os.environ.pop(k, None)
+
+    def tearDown(self):
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_unreachable_index_skips_with_network_reason(self):
+        # Port 9 on loopback (discard) has no listener here: the connection is refused at once, no network used.
+        os.environ["PIP_INDEX_URL"] = "http://127.0.0.1:9/simple/"
+        os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1"
+        why = install_skip_reason()
+        self.assertIsNotNone(why)
+        self.assertTrue(why.startswith(NETWORK_SKIP + ":"), why)
+        self.assertIn("127.0.0.1:9", why)
+
+    def test_reachable_index_runs(self):
+        import http.server
+        import threading
+        class Quiet(http.server.BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                self.send_response(404)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Quiet)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            os.environ["PIP_INDEX_URL"] = f"http://127.0.0.1:{srv.server_port}/simple/"  # a 404 still answers
+            os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1"
+            self.assertIsNone(install_skip_reason())
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_skip_reason_never_prints_index_credentials(self):
+        os.environ["PIP_INDEX_URL"] = "http://alice:s3cret-tok@127.0.0.1:9/simple/"
+        os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1"
+        why = install_skip_reason()
+        self.assertIsNotNone(why)
+        self.assertNotIn("s3cret-tok", why)
+        self.assertNotIn("alice", why)
+        self.assertIn("***@127.0.0.1:9", why)
+        self.assertEqual(redact("https://tok@host/x"), "https://***@host/x")
+        self.assertEqual(redact("https://pypi.org/simple/"), "https://pypi.org/simple/")
+
+    def test_index_with_credentials_is_probed_without_them(self):
+        import http.server
+        import threading
+        seen = []
+
+        class Auth(http.server.BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                seen.append(self.path)
+                self.send_response(401)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Auth)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            os.environ["PIP_INDEX_URL"] = f"http://alice:tok@127.0.0.1:{srv.server_port}/simple/"
+            os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1"
+            self.assertIsNone(install_skip_reason())  # reachable: a 401 is an answer
+            self.assertEqual(seen, ["/simple/"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_ci_never_skips_for_network(self):
+        os.environ["PIP_INDEX_URL"] = "http://127.0.0.1:9/simple/"
+        os.environ["CI"] = "true"
+        self.assertIsNone(install_skip_reason())
+
+    def test_explicit_opt_out_still_works(self):
+        os.environ["AEC_SKIP_INSTALL_TEST"] = "1"
+        why = install_skip_reason()
+        self.assertIsNotNone(why)
+        self.assertFalse(why.startswith(NETWORK_SKIP), why)
 
 
 class TestVersionAgreement(unittest.TestCase):

@@ -8,9 +8,13 @@ record or says why not), the records check against a fresh edge snapshot, the Mt
 path on the fixture repo. Also runs ruff when it is installed (CI does not). Report-only CI steps (code-impact, the
 structural diff artifact) are not run: they never fail a build. Stops at nothing: every step runs, then a summary,
 and the exit code is 1 if any step failed. Standard library only; writes only to a temporary directory.
+
+Offline, the install test (tests/test_install.py) skips with a reason starting "needs internet"; the summary
+counts those skips on their own line so they don't read as a failure.
 """
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,12 +22,23 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+NETWORK_SKIP = "needs internet"  # the reason prefix tests/test_install.py uses; keep the two in step
+# `unittest -v` prints "test_x (module.Class.test_x) ... skipped 'reason'", with the docstring's first line on a
+# second line before " ... " when the test has one, and the reason in double quotes when it contains a quote.
+_SKIP_LINE = re.compile(r"^(\w+) \([\w.]+\)(?:\n.*?)? \.\.\. skipped (['\"])(.*)\2$", re.M)
 
 
-def run(name: str, cmd: list[str], env: dict | None = None) -> bool:
+def network_skips(output: str) -> list[tuple[str, str]]:
+    """(test name, reason) for each test that `unittest -v` reported skipped because the network is missing."""
+    return [(m.group(1), m.group(3)) for m in _SKIP_LINE.finditer(output) if m.group(3).startswith(NETWORK_SKIP)]
+
+
+def run(name: str, cmd: list[str], env: dict | None = None, capture: list | None = None) -> bool:
     print(f"== {name}: {' '.join(cmd)}", flush=True)
     r = subprocess.run(cmd, cwd=ROOT, env={**os.environ, **(env or {})}, capture_output=True, text=True)
     out = (r.stdout + r.stderr).strip()
+    if capture is not None:
+        capture.append(out)
     if r.returncode != 0:
         print("\n".join(out.splitlines()[-25:]))  # the tail is where a failure is reported
     print(f"   {'ok' if r.returncode == 0 else f'FAILED (exit {r.returncode})'}", flush=True)
@@ -40,7 +55,11 @@ def main() -> int:
     if remote:
         subprocess.run(["git", "fetch", "-q", remote], cwd=ROOT, check=False)
     results = {}
-    results["unit tests"] = run("unit tests", [py, "-m", "unittest", "discover", "-s", "tests"], src)
+    unit_out: list[str] = []
+    results["unit tests"] = run("unit tests", [py, "-m", "unittest", "discover", "-s", "tests", "-v"], src, unit_out)
+    offline = network_skips("\n".join(unit_out))
+    for test, why in offline:
+        print(f"   skipped {test}: {why}")
     results["record touch"] = run("record touch", [py, "tools/record_touch.py", "--base", a.base])
     results["edge snapshot"] = run("edge snapshot", [py, "-m", "aec", "edges", ".", "-o", str(tmp / "edges.jsonl")], src)
     results["records check"] = run("records check", [py, "-m", "aec", "check", ".aec/records.jsonl",
@@ -62,6 +81,9 @@ def main() -> int:
     failed = [k for k, ok in results.items() if not ok]
     print(f"\npreflight: {len(results) - len(failed)} of {len(results)} passed"
           + (f"; FAILED: {', '.join(failed)}" if failed else ""))
+    if offline:
+        print(f"{len(offline)} test{'s' if len(offline) > 1 else ''} skipped: {NETWORK_SKIP} (not a failure; CI runs "
+              f"{'them' if len(offline) > 1 else 'it'}): {', '.join(t for t, _ in offline)}")
     return 1 if failed else 0
 
 
