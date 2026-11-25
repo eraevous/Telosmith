@@ -25,6 +25,8 @@ def normalize_output(text: str) -> str:
 
 
 class ExampleWithoutSpecKitTest(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "the demo is a bash script that needs POSIX tools (mktemp, sed -i, git hooks "
+                                      "run by bash); not supported on Windows")
     def test_demo_matches_expected_output(self):
         if shutil.which("git") is None:
             self.skipTest("git is not available on PATH")

@@ -32,7 +32,9 @@ jobs:
         run: |
           PYTHONPATH=src python -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/tests.log"
           { echo "## Skipped tests on ${{ matrix.os }}, Python ${{ matrix.python-version }}"
-            grep -E "\.\.\. skipped" "$RUNNER_TEMP/tests.log" | sed 's/^/- /' || echo "- none"; } >> "$GITHUB_STEP_SUMMARY"
+            # A test with a docstring prints its id on one line and "docstring ... skipped" on the next.
+            awk '/\.\.\. skipped/ { print "- " ($0 ~ /^[A-Za-z_][A-Za-z0-9_]* \(/ ? $0 : prev " " $0); n++ }
+                 { prev = $0 } END { if (!n) print "- none" }' "$RUNNER_TEMP/tests.log"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Record touch (a src/ change appends a record or says why not)
         if: github.event_name == 'pull_request'
         run: python tools/record_touch.py --base origin/${{ github.base_ref }}
