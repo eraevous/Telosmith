@@ -207,28 +207,35 @@ def _looks_binary(raw):
 
 
 def _line_endings_converted(root, entries, autocrlf):
-    """True when Git converts line endings for every (name, raw) entry: attributes from check-attr
-    (no filter runs), and Git's binary heuristic wherever conversion is automatic rather than forced."""
+    """True when Git converts line endings for every (name, raw) entry. Git's own effective reading of the text,
+    eol and legacy crlf attributes comes from `ls-files --eol` (a literal `text=set` is not boolean `text` there);
+    other clean transforms from check-attr. No filter runs. Automatic conversion also needs Git's binary heuristic."""
     names = [name for name, _ in entries]
-    out = git(root, 'check-attr', '-z', '--stdin', 'text', 'eol', 'crlf', 'working-tree-encoding', 'filter', 'ident',
+    out = git(root, 'check-attr', '-z', '--stdin', 'working-tree-encoding', 'filter', 'ident',
               input=b''.join(os.fsencode(n) + b'\0' for n in names), optional=True)
-    if out is None:
+    eols = git(root, 'ls-files', '--eol', '-z', '--', '.', optional=True)
+    if out is None or eols is None:
         return False
     fields = out.split(b'\0')
     attrs = {}
     for i in range(0, len(fields) - 2, 3):
         attrs.setdefault(os.fsdecode(fields[i]), {})[fields[i + 1].decode()] = fields[i + 2].decode()
+    effective = {}
+    for row in eols.split(b'\0'):
+        if b'\t' in row:
+            info, path = row.split(b'\t', 1)
+            effective[os.fsdecode(path)] = info.decode(errors='replace').partition('attr/')[2].strip()
     for name, raw in entries:
         a = attrs.get(name, {})
-        text, eol, legacy = a.get('text', 'unspecified'), a.get('eol', 'unspecified'), a.get('crlf', 'unspecified')
-        if text == 'unset' or legacy == 'unset':
-            return False  # -text, binary or -crlf: Git compares bytes, so a CRLF edit is an edit
         if any(a.get(k, 'unspecified') not in ('unspecified', 'unset') for k in ('working-tree-encoding', 'filter', 'ident')):
             return False  # another clean transform applies; stay dirty rather than guess it (Codex on #111)
-        if text == 'set' or (text == 'unspecified' and legacy in ('set', 'input')):
-            continue  # forced text: converted whatever the content (legacy crlf only when text is unspecified)
-        if not (autocrlf or text == 'auto' or eol in ('crlf', 'lf')) or _looks_binary(raw):
-            return False  # automatic conversion (autocrlf, text=auto, eol alone) skips binary-looking files
+        attr = effective.get(name)
+        if attr is None or attr.startswith('-text'):
+            return False  # unknown to the index, or -text/binary/-crlf: Git compares bytes, so a CRLF edit is an edit
+        if attr.startswith('text') and not attr.startswith('text=auto'):
+            continue  # forced text (text, eol=..., crlf, crlf=input): converted whatever the content
+        if not (attr.startswith('text=auto') or autocrlf) or _looks_binary(raw):
+            return False  # automatic conversion (text=auto, or autocrlf) skips binary-looking files
     return True
 
 

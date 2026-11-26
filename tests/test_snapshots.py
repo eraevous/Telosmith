@@ -140,6 +140,8 @@ class TestRevisionSnapshots(History):
         f.write_bytes(b'abc\rdef\r\n')
         for rule,autocrlf,dirty in (('','true',True),('*.dat text=auto','false',True),
                                     ('*.dat text=auto crlf','false',True),  # text wins over legacy crlf
+                                    ('*.dat text=set','false',True),  # a literal value, not boolean text
+                                    ('*.dat crlf=set','false',True),
                                     ('*.dat text','false',False)):
             (self.root/'.gitattributes').write_bytes((rule+'\n').encode())  # LF on every OS
             git(self.root,'add','.gitattributes');git(self.root,'commit','-qm','attr '+rule)
