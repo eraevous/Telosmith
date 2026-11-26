@@ -242,7 +242,8 @@ class TestSourceSearch(SourceFixture):
         (self.corpus/'external-dir').symlink_to(self.repo,target_is_directory=True)
         (self.corpus/'internal-cycle').symlink_to(self.corpus,target_is_directory=True)
         (self.corpus/'inside.txt').symlink_to(self.corpus/'valid.txt')
-        os.mkfifo(self.corpus/'pipe')
+        if hasattr(os,'mkfifo'):  # Windows has no FIFOs; the symlink cases above still run there
+            os.mkfifo(self.corpus/'pipe')
         from aec.sources import render_show
         with patch('socket.socket',side_effect=AssertionError('network')), \
              patch('urllib.request.urlopen',side_effect=AssertionError('network')), \

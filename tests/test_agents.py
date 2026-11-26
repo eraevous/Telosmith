@@ -10,6 +10,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from _platform import POSIX_MODES
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from aec import agents, config  # noqa: E402
@@ -137,6 +139,7 @@ class KateRound7(Case):
         self.assertEqual(self.md.read_bytes(), before)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), [".aec", ".git", "AGENTS.md"])
 
+    @unittest.skipUnless(os.name == "posix", POSIX_MODES)
     def test_a_new_file_gets_the_umask_mode(self):
         old = os.umask(0o027)
         try:
@@ -192,7 +195,7 @@ class Write(Case):
         self.assertEqual(self.md.stat().st_mtime_ns, before)
 
     def test_no_markers_is_refused_unless_append(self):
-        self.md.write_text(OWN, encoding="utf-8")
+        self.md.write_bytes(OWN.encode("utf-8"))  # LF on every OS (write_text gives CRLF on Windows)
         code, _, err = self.agents("write")
         self.assertEqual(code, 1)
         self.assertIn("no telosmith:agents markers", err)
@@ -266,6 +269,7 @@ class Write(Case):
         self.assertIn("agents.owner", err)
         self.assertEqual(self.md.read_text(encoding="utf-8"), before)
 
+    @unittest.skipUnless(os.name == "posix", POSIX_MODES)
     def test_keeps_the_file_mode(self):
         self.with_markers()
         os.chmod(self.md, 0o640)

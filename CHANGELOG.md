@@ -5,6 +5,11 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Changed (CI, HO-AEC-20261123-ER2R, DEC-270 (7))
+- CI runs the tests on macOS and Windows (Python 3.12) as well as Linux (3.10-3.13). Each job writes its skipped
+  tests, with their reasons, to the job summary, so what a platform doesn't run is stated by CI. The bash demo
+  (`examples/without-spec-kit/run.sh`) now runs in CI on Linux and macOS; on Windows it is a named skip.
+  
 ### Fixed (HO-AEC-20261124-HMM6, newcomer friction reported in #114)
 - The install test (`tests/test_install.py`) skips with "needs internet: package index … unreachable" when a short
   probe can't reach the index pip would use, instead of failing offline. Under CI (`CI` set) it never skips for the

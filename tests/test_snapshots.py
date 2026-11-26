@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT/'src'))
 from aec import edges as E
+from aec import snapshots as E_snapshots  # noqa: E402
 from aec.__main__ import main
 
 
@@ -81,6 +82,71 @@ class TestRevisionSnapshots(History):
         plain=Path(self.tmp.name)/'plain';plain.mkdir()
         (plain/'one.py').write_text('X=1\n')
         self.assertIsNone(E.snapshot(plain)['header']['base_revision'])
+
+    def test_autocrlf_checkout_is_clean_and_other_crlf_edits_are_dirty(self):
+        # Git for Windows checks text out with CRLF (core.autocrlf=true) over LF blobs; Git calls that
+        # clean, so a snapshot must too (AEC-R10; Telosmith #111). Without autocrlf, CRLF is an edit.
+        p=self.root/'src/a/x.py'
+        p.write_bytes(p.read_bytes().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))
+        for value,dirty in (('true',False),('input',False),('false',True)):
+            git(self.root,'config','core.autocrlf',value)
+            self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,value)
+        git(self.root,'config','core.autocrlf','true')
+        p.write_bytes(p.read_bytes()+b'# edited\r\n')
+        self.assertTrue(E.snapshot(self.root)['header']['dirty'],'a real edit under autocrlf')
+
+    def test_crlf_normalization_respects_per_file_attributes(self):
+        # Codex on #111: under autocrlf, a file marked -text (or binary, -crlf) is compared byte for byte,
+        # as Git does; a text/eol attribute converts even without autocrlf.
+        p=self.root/'src/a/x.py'
+        lf=p.read_bytes().replace(b'\r\n',b'\n')
+        attributes=self.root/'.gitattributes'
+        for rule,autocrlf,dirty in (('*.py -text','true',True),('*.py binary','input',True),
+                                    ('*.py -crlf','true',True),('*.py text','false',False),
+                                    ('*.py eol=crlf','false',False),('*.txt -text','true',False),
+                                    # other clean transforms: stay dirty, never run or emulate them
+                                    ('*.py text working-tree-encoding=ISO-8859-1','false',True),
+                                    ('*.py text ident','false',True),('*.py text filter=none','false',True)):
+            attributes.write_bytes((rule+'\n').encode())  # LF: write_text gives CRLF on Windows
+            git(self.root,'add','.gitattributes');git(self.root,'commit','-qm',rule)
+            git(self.root,'config','core.autocrlf',autocrlf)
+            # Blob form on disk for every tracked file: a Windows checkout and write_text wrote CRLF,
+            # which is a real difference wherever this case's settings don't convert line endings.
+            for name in git(self.root,'ls-files','-z').split('\0'):
+                f=self.root/name
+                if name and b'\0' not in f.read_bytes():
+                    f.write_bytes(f.read_bytes().replace(b'\r\n',b'\n'))
+            self.assertFalse(E.snapshot(self.root)['header']['dirty'],rule)
+            p.write_bytes(lf.replace(b'\n',b'\r\n'))
+            self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,(rule,autocrlf))
+
+    def test_binary_heuristic_does_not_count_line_feeds_as_printable(self):
+        # Codex on #111: one control byte and 128 LFs is binary to Git, so autocrlf leaves it alone.
+        self.assertTrue(E_snapshots._looks_binary(b'\x01'+b'\n'*128))
+        self.assertTrue(E_snapshots._looks_binary(b'\x01'+b'\r\n'*128))
+        self.assertFalse(E_snapshots._looks_binary(b'\x01'+b'a'*128+b'\r\n'))
+        self.assertFalse(E_snapshots._looks_binary(b'plain text\r\nmore\n'))
+
+    def test_automatic_crlf_conversion_skips_binary_looking_content(self):
+        # Codex on #111: autocrlf and text=auto leave a file with a lone CR (or many control bytes) alone,
+        # as Git does, so a CRLF edit to it is an edit; forced `text` still converts it.
+        f=self.root/'odd.dat'
+        f.write_bytes(b'abc\rdef\n')
+        git(self.root,'add','odd.dat');git(self.root,'commit','-qm','odd')
+        for name in git(self.root,'ls-files','-z').split('\0'):  # blob form (a Windows checkout wrote CRLF)
+            g=self.root/name
+            if name and name!='odd.dat' and b'\0' not in g.read_bytes():
+                g.write_bytes(g.read_bytes().replace(b'\r\n',b'\n'))
+        f.write_bytes(b'abc\rdef\r\n')
+        for rule,autocrlf,dirty in (('','true',True),('*.dat text=auto','false',True),
+                                    ('*.dat text=auto crlf','false',True),  # text wins over legacy crlf
+                                    ('*.dat text=set','false',True),  # a literal value, not boolean text
+                                    ('*.dat crlf=set','false',True),
+                                    ('*.dat text','false',False)):
+            (self.root/'.gitattributes').write_bytes((rule+'\n').encode())  # LF on every OS
+            git(self.root,'add','.gitattributes');git(self.root,'commit','-qm','attr '+rule)
+            git(self.root,'config','core.autocrlf',autocrlf)
+            self.assertEqual(E.snapshot(self.root)['header']['dirty'],dirty,(rule,autocrlf))
 
     def test_method_configuration_and_legacy_mismatch(self):
         original=E.snapshot(self.root)
