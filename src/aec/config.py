@@ -26,6 +26,9 @@ Schema version 1 (every key optional):
   agents.read_first  paths    files to read first, in order, after the purpose records (default: none)
   agents.ledgers     paths    append-only files besides the records file (default: none)
   agents.hard_rules  texts    this repository's extra hard rules, one line each (default: none)
+  manifest           object   what `aec manifest build|check` read: path, tool, command, pass_env, authority,
+                              runtime, other, skills, a2a (docs/integrations/manifest-build.md; default: none,
+                              and build|check refuse to run)
 
 The `agents.*` texts are rendered into Markdown by `aec agents` (src/aec/agents.py), so each is one line, at most
 300 characters, and holds no backtick or HTML comment marker (`<!--`, `-->`).
@@ -56,8 +59,12 @@ DEFAULTS: dict[str, object] = {
     "agents.read_first": [],
     "agents.ledgers": [],
     "agents.hard_rules": [],
+    "manifest": None,
 }
-_SECTIONS = {"init", "agents"}
+_SECTIONS = {"init", "agents", "manifest"}
+# `manifest`: what `aec manifest build|check` read (docs/integrations/manifest-build.md). The keys' own shapes are
+# checked by aec.manifest_build.section_problems when a build reads them; here only the key set, so a typo is an error.
+MANIFEST_KEYS = ("path", "tool", "command", "pass_env", "authority", "runtime", "other", "skills", "a2a")
 _AGENT_KEYS = ("owner", "glossary", "read_first", "ledgers", "hard_rules")
 _TEXT_MAX = 300
 _TOP = {"_doc", "version", "records"} | _SECTIONS
@@ -226,6 +233,14 @@ def validate(doc) -> tuple[dict[str, object], list[str]]:
                 values["init.snippet_files"] = v
     if "agents" in doc:
         _check_agents(doc["agents"], values, problems)
+    if "manifest" in doc:
+        m = doc["manifest"]
+        if not isinstance(m, dict):
+            problems.append("manifest: must be an object")
+        else:
+            for key in sorted(set(m) - set(MANIFEST_KEYS)):
+                problems.append(f"unknown key 'manifest.{key}' (known: {', '.join('manifest.' + k for k in MANIFEST_KEYS)})")
+            values["manifest"] = m
     return (values if not problems else {}), problems
 
 

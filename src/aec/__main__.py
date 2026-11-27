@@ -24,6 +24,7 @@
   aec agents show|write|check [--repo D] [--file F] [--append]  the shared governance block of AGENTS.md
   aec snippets show hook|ci | check [--repo D] [--ref SHA]  render init's hook/CI snippets from the config; check copies
   aec manifest validate FILE [--root D]  check a telosmith.manifest/1.0 tool manifest; never runs anything
+  aec manifest build|check --trust-config [--root D]  build from ROOT's configured MCP server, or compare with it
   python -m aec speckit drift PATH... [--all] [--json]         spec/record drift, both directions (writes nothing)
 """
 from __future__ import annotations
