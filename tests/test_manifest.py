@@ -246,8 +246,10 @@ class AuthorityConsistency(unittest.TestCase):  # MAN-05
         self.assertTrue(problems(m))
 
     def test_declared_grants_are_listed_as_declarations_not_grants(self):
-        # Reading (unconfirmed): the accepted page lets a declaration name grants (as aec a2a does) and says it
-        # grants nothing; MAN-05 would fail them. Kept as a note; asked of Kate and Zach in the handoff output.
+        # The accepted page lets a declaration name grants (as aec a2a does) and says it grants nothing. MAN-05
+        # (AEC-R-manifest-authority-consistency@1) would fail them; Kate's round-11 record AEC-R-manifest-validate@1
+        # asks for exactly this test (non-empty grants pass with the no-authority note) and recommends revising
+        # MAN-05. Zach hasn't ruled; until he does, this stays the implementer's reading.
         m = base()
         m["sockets"]["authority"]["grants"] = ["review sign-off"]
         errs, notes = manifest.validate(m)
