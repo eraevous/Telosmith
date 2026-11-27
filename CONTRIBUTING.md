@@ -28,12 +28,15 @@ PYTHONPATH=src python3 -m aec check examples/mtg-pilot/records.jsonl
 ```
 
 One test installs Telosmith into a fresh virtual environment, which needs network access to
-fetch setuptools; set `AEC_SKIP_INSTALL_TEST=1` to skip it offline. The Spec Kit
+fetch setuptools. When the package index can't be reached it skips with "needs internet", and
+`tools/preflight.py` lists it as a skip, not a failure (under CI it always runs); set
+`AEC_SKIP_INSTALL_TEST=1` to skip it regardless. The Spec Kit
 extension test skips unless the pinned Spec Kit CLI (v1.2.3) is installed.
 
 ## The rules that matter most
 
-These come from the project's [constitution](.specify/memory/constitution.md) and
+These come from the project's governance charter ([constitution](.specify/memory/constitution.md), in Spec Kit's
+term) and
 [charter](CHARTER.md). A pull request that breaks one will be asked to change.
 
 1. **Standard library only, deterministic output.** The same input gives byte-identical

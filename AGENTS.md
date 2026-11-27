@@ -68,6 +68,9 @@ Run from the repository root with PYTHONPATH=src:
 | `python -m aec unresolved` | Retrieve unresolved calls by why and file/symbol region |
 | `python -m aec anchor` | Print a checked anchor (sha256 + locator) for a passage, as JSON |
 | `python -m aec append` | Append one record, computing its anchors |
+| `python -m aec mcp` | Serve the records over MCP on stdio, read-only (`docs/integrations/mcp.md`) |
+| `python -m aec agents` | Render the shared governance block of AGENTS.md from the repository config (`docs/integrations/agents-md.md`) |
+| `python -m aec manifest validate` | Check a tool manifest against schema 1.0; runs nothing (`docs/integrations/manifest.md`) |
 
 Source check/show/search are offline and read-only. Anchors/rationale live in
 Record.data. Filesystem anchor states are warnings; malformed anchor shapes are

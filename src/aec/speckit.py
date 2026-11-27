@@ -386,6 +386,18 @@ def find_records(start: Path) -> Path | None:
     return None
 
 
+def _configured_records(start: Path):
+    """`records` from the config found from START, else the nearest records file above it; False (after printing
+    the error) when that config is invalid."""
+    from .config import ConfigError, discovered_records
+    try:
+        configured = discovered_records(start)
+    except ConfigError as error:
+        print(f"error: {error}")
+        return False
+    return configured if configured is not None else find_records(start)
+
+
 def spec_files(paths: list[Path]) -> list[Path]:
     out: list[Path] = []
     for p in paths:
@@ -443,7 +455,9 @@ def cmd_derive(a) -> int:
     if not spec.is_file():
         print(f"error: no spec.md at {feature}")
         return 2
-    rec_path = Path(a.records) if a.records else find_records(spec.resolve().parent)
+    rec_path = Path(a.records) if a.records else _configured_records(spec.resolve().parent)
+    if rec_path is False:
+        return 2
     if not rec_path or not rec_path.is_file():
         print("error: no .aec/records.jsonl found above the feature; pass --records")
         return 2
@@ -484,7 +498,9 @@ def cmd_drift(a) -> int:
     if not files:
         print("error: no spec.md found under the given paths")
         return 2
-    rec_path = Path(a.records) if a.records else find_records(files[0].resolve().parent)
+    rec_path = Path(a.records) if a.records else _configured_records(files[0].resolve().parent)
+    if rec_path is False:
+        return 2
     if not rec_path or not rec_path.is_file():
         print("error: no .aec/records.jsonl found; pass --records")
         return 2
@@ -517,13 +533,13 @@ def add_parser(sub) -> None:
     sk_sub = sk.add_subparsers(dest="speckit_cmd", required=True)
     d = sk_sub.add_parser("derive", help="regenerate the fenced record-derived blocks in a feature's spec.md")
     d.add_argument("feature_dir", help="feature directory (or its spec.md)")
-    d.add_argument("--records", help="records file (default: nearest .aec/records.jsonl above the feature)")
+    d.add_argument("--records", help="records file (default: records in the nearest .aec/config.json, else the nearest .aec/records.jsonl above the feature)")
     d.add_argument("--constitution", help="also regenerate derived blocks in this constitution file")
     d.add_argument("--insert", action="store_true", help="add an empty derived block where none exists, then fill it")
     d.add_argument("--check", action="store_true", help="write nothing; exit 1 if anything would change")
     r = sk_sub.add_parser("drift", help="report spec/record mismatches in both directions (writes nothing)")
     r.add_argument("paths", nargs="+", help="feature directories, spec.md files, or a specs/ root")
-    r.add_argument("--records", help="records file (default: nearest .aec/records.jsonl)")
+    r.add_argument("--records", help="records file (default: records in the nearest .aec/config.json, else the nearest .aec/records.jsonl)")
     r.add_argument("--all", action="store_true", help="report every committed requirement no scanned spec covers")
     r.add_argument("--json", action="store_true")
     r.add_argument("--exit-code", action="store_true", help="exit 1 when there are findings")

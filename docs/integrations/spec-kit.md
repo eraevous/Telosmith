@@ -1,6 +1,6 @@
 # Spec Kit integration
 
-AEC ships a Spec Kit extension (Spec Kit ≥ 1.2.0, tested on v1.2.3) in [`extension/`](../../extension/). Its hooks are optional and report-only: they never edit specs, plans, tasks, the constitution or records.
+AEC ships a Spec Kit extension (Spec Kit ≥ 1.2.0, tested on v1.2.3) in [`extension/`](../../extension/). Its hooks are optional and report-only: they never edit specs, plans, tasks, the constitution (Spec Kit's governance charter for the project) or records.
 
 | Spec Kit step | AEC command it runs | What it reports |
 |---|---|---|

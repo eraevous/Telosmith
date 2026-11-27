@@ -39,7 +39,8 @@ snippets decide what a failure blocks.
 ## Conclusion statuses (`impact`, `code-impact`)
 
 A conclusion keeps the most severe status it reaches, in this order: exploratory < rebaseline < weakened < contested <
-needs_review < stale < unjustified. Only latest versions take a status. Statuses are a report and are not stored:
+needs_review < stale < unjustified. `stale` is what requirements traceability calls a *suspect link*: the code or
+record a conclusion rests on changed. Only latest versions take a status. Statuses are a report and are not stored:
 running again on later records gives the new answer.
 
 | Transition | Evaluator | Threshold | Protects against | Reversibility | Where |
@@ -72,7 +73,7 @@ running again on later records gives the new answer.
 | Transition | Evaluator | Threshold | Protects against | Reversibility |
 |---|---|---|---|---|
 | Purpose or contract adoption (a new `AEC-P0` version, a check's semantics) | Owner judgement, after an independent review | The owner's own words, recorded with a locator in the private decision log | Agents redefining what the project is for | Owner judgement |
-| Merge to `main` | Owner, or the coordinator after review where a handoff allows it | Tests and lint pass, plus an independent review | Unreviewed change | Revert by a new PR (no force-pushes) |
+| Merge to `main` | Owner, or the orchestrator (coordinator) after review where a handoff allows it | Tests and lint pass, plus an independent review | Unreviewed change | Revert by a new PR (no force-pushes) |
 
 ## Findings
 

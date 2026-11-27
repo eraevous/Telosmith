@@ -5,6 +5,7 @@ Each check has a violating fixture and a clean decoy. Fixtures are synthetic (no
 import contextlib
 import io
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -183,7 +184,8 @@ class Derive(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(victim.read_text(), "keep me")
         self.assertFalse(self.r.spec.is_symlink())
-        self.assertEqual(self.r.spec.stat().st_mode & 0o777, 0o640)
+        if os.name != "nt":  # POSIX_MODES (tests/_platform.py): Windows has no 0o640 to keep
+            self.assertEqual(self.r.spec.stat().st_mode & 0o777, 0o640)
         self.assertEqual(sorted(p.name for p in self.r.feature.iterdir()), ["spec.md", "spec.md.telosmith-tmp"])
 
     def test_unloadable_record_stops_both_commands(self):  # violation (Copilot, #73)
@@ -287,7 +289,7 @@ class Derive(unittest.TestCase):
 
     def test_crlf_checkout_is_not_a_hand_edit(self):  # decoy: line endings only
         self.r.run("speckit", "derive", str(self.r.feature), "--insert")
-        crlf = self.r.spec.read_bytes().replace(b"\n", b"\r\n")
+        crlf = self.r.spec.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")  # CRLF once, on any OS
         self.r.spec.write_bytes(crlf)
         res = S.derive_text(Store.load(self.r.root / ".aec" / "records.jsonl"), crlf.decode())
         self.assertEqual(res.skipped, [])

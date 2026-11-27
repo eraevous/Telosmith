@@ -34,7 +34,7 @@ Zach's framing for the next stage: **preserve the engineering wisdom, not necess
 
 ## The current imbalance
 
-The justification machinery (records, change impact, authority, evidence tiers) is ahead of the machinery that **captures, maintains, reconciles and delivers** architectural knowledge to agents. At WP0 planning, AEC itself contained the drift it exists to catch (repaired in spec 003; pending review):
+The justification machinery (records, change impact, authority, evidence tiers) is ahead of the machinery that **captures, maintains, reconciles and delivers** architectural knowledge to agents. At WP0 planning, AEC itself contained the drift it exists to catch (drift detection for requirements: recorded reasons that no longer match the code; repaired in spec 003; pending review):
 - an `AGENTS.md` and `CHARTER.md` inherited from Cognitive-Scaffolding (Typer, FAISS, S3, a missing `VISION.md`);
 - an importer that drops the singular `@ai-source-file` used by AEC's own purpose files.
 
@@ -108,7 +108,7 @@ A typed `authorized_by` is a *claim* of authorization, not verified consent.
   An independent reviewer agent judges it. Mandatory fixture: Cognitive-Scaffolding's documented async orchestrator that is actually a synchronous stub (September 2025 audit). Negative controls: implementation changes that still satisfy the contract.
 - **Run/Drift as events.** `aec drift` lists triggers:
   - topology: a new strongly connected component in the right projection, an edge crossing a declared boundary, a jump in fan-in;
-  - records: stale or contested conclusions;
+  - records: stale conclusions (requirements traceability's *suspect links*: something they rest on changed) or contested ones;
   - coordination: a handoff whose premises may no longer hold.
 
   A drift review is an agent role. Its loop is: understand → implement → observe → reconcile → revise → preserve → retrieve.
@@ -144,9 +144,9 @@ WP1–WP5 are approved as direction and work-package order. Each still requires 
 
 | WP | Content | Status |
 |---|---|---|
-| **WP0** | AEC reconciled with itself: importer repairs (singular field, structured fields, no silent truncation, heading variants); `AGENTS.md`, `CHARTER.md` and the constitution reconciled, and the `VISION.md` reference resolved; Oct 26–28 history imported as *candidate*, source-linked records, with a list of what Zach must confirm; evaluation criteria designed now (`docs/failure-modes.md`); a cold-agent usability check | **merged (PR #14), released in v0.4.0**: `specs/003-self-reconciliation/`. Reconstructed history remains proposed until Zach confirms it (`docs/decisions-to-confirm.md`) |
+| **WP0** | AEC reconciled with itself: importer repairs (singular field, structured fields, no silent truncation, heading variants); `AGENTS.md`, `CHARTER.md` and the constitution (the project's governance charter) reconciled, and the `VISION.md` reference resolved; Oct 26–28 history imported as *candidate*, source-linked records, with a list of what Zach must confirm; evaluation criteria designed now (`docs/failure-modes.md`); a cold-agent usability check | **merged (PR #14), released in v0.4.0**: `specs/003-self-reconciliation/`. Reconstructed history remains proposed until Zach confirms it (`docs/decisions-to-confirm.md`) |
 | WP1A | commit-addressed snapshots and structural diffs (merge-base vs head), basic reachability, fan-in and fan-out, a CI report as an artifact (no PR comments yet) | **approved by Zach 2026-10-30; merged (PR #31), not yet released**; spec `specs/005-commit-snapshots/` |
-| **WP2-probe** | Before any context delivery: show that giving agents graph information changes what they do, compared with the counterfactual of what they would produce without it, and find when it helps and when it misleads. Hand-built briefings at different levels of complexity, tasks where a hidden dependency matters, a control arm with ordinary repo access, and decoy (wrong or irrelevant) briefings | **run as probe-001 (2026-11-01): no signal** on easy tasks; it exposed the resolver gap fixed in C-11 (PR #32). A harder probe is C-12 |
+| **WP2-probe** | An eval, before any context delivery: show that giving agents graph information changes what they do, compared with the counterfactual of what they would produce without it, and find when it helps and when it misleads. Hand-built briefings at different levels of complexity, tasks where a hidden dependency matters, a control arm with ordinary repo access, and decoy (wrong or irrelevant) briefings | **run as probe-001 (2026-11-01): no signal** on easy tasks; it exposed the resolver gap fixed in C-11 (PR #32). A harder probe is C-12 |
 | WP2A | minimal `aec context <symbol>` and `--change` | **moved back** behind WP2-probe (Zach, 2026-10-30): its design depends on what the probe shows actually changes agent decisions |
 | **WP-S** | Source anchors/rationale; raw-byte integrity and locator observations; bounded record-directed retrieval and direct configured-root fallback | **merged (PR #17), released in v0.4.0**: `specs/004-source-anchors/`; meaning, authority, private providers and representation-002 remain outside this implementation |
 | WP1B | historical analytics: SCC per projection, temporal deltas, churn, co-change, boundary changes | alongside WP2 expansion |

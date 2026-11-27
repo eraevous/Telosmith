@@ -1,7 +1,8 @@
 # Getting started
 
-This guide takes you from nothing to a `stale` report on your own code, then covers the extra steps for
-repositories that already have Codex++ purpose files. For what the results mean, see the
+This guide takes you from nothing to a `stale` report on your own code (a *suspect link*, in requirements-traceability
+terms: a record whose code changed under it), then covers the extra steps for repositories that already have
+Codex++ purpose files. For what the results mean, see the
 [README](../../README.md#what-the-results-mean).
 
 ## Install
@@ -86,8 +87,10 @@ git worktree add /tmp/aec-base main && aec edges /tmp/aec-base -o .aec/before.js
 - **CI job** (`.aec/snippets/aec-ci.yml`): compares the merge-base with the checkout and writes the report to the
   job summary on the run page. It never fails the job and posts no pull-request comment. It installs the commit
   `aec init` was installed from when known (a git install, or the `HEAD` of a source checkout run with
-  `PYTHONPATH=src` or installed editable, with a note: push that commit), the v0.5.0 tag once it exists, or else `@main`
-  under a `WARNING: UNPINNED` comment: replace that with a commit you have reviewed.
+  `PYTHONPATH=src` or installed editable, with a note: push that commit), or else the commit that this version's
+  release tag (or `main`) names, resolved with `git ls-remote` when you run `aec init`. It always writes a full
+  40-character commit, never a tag or branch; if that commit can't be established (offline, say), `aec init` stops
+  before writing anything and says why (`--no-hooks` skips the snippets).
 
 A link to a module covers every definition in it; a link to a function covers its body, and changes one step
 away (a helper it calls, a constant it reads) appear as `structural: ... reaches changed ...` pointers. A

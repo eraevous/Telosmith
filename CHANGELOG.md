@@ -5,6 +5,94 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Changed (CI, HO-AEC-20261123-ER2R, DEC-270 (7))
+- CI runs the tests on macOS and Windows (Python 3.12) as well as Linux (3.10-3.13). Each job writes its skipped
+  tests, with their reasons, to the job summary, so what a platform doesn't run is stated by CI. The bash demo
+  (`examples/without-spec-kit/run.sh`) now runs in CI on Linux and macOS; on Windows it is a named skip.
+  
+### Fixed (HO-AEC-20261124-HMM6, newcomer friction reported in #114)
+- The install test (`tests/test_install.py`) skips with "needs internet: package index … unreachable" when a short
+  probe can't reach the index pip would use, instead of failing offline. Under CI (`CI` set) it never skips for the
+  network. `tools/preflight.py` prints such skips on their own summary line, so an offline first run reads
+  "1 test skipped: needs internet", not a red test.
+
+### Added (AEC-R-manifest-validate-impl@7, DEC-256 item 7 follow-up, first slice)
+- `aec manifest validate FILE [--root DIR]` checks a tool manifest against `telosmith.manifest/1.0`
+  (`AEC-D-manifest-schema@3`): exact keys in Telosmith-owned objects, every socket key in its empty form, version
+  (newer minors refused by name), the card and its authority extension, version agreement, runtime values, list cache
+  policy, credential-shaped values and host paths (reported by location, never by value), and with `--root` the skill
+  folders (a symlink out of the repository fails). It never runs anything, and no problem or note repeats a
+  credential-shaped value. `aec manifest build|check` come next.
+- The example manifest drops its `_doc` key (an unknown key under the schema) and its skill description now equals the
+  skill's `SKILL.md`, a drift the validator found.
+
+### Added (AEC-R-agent-skills-impl@1, AEC-R-authority-socket-impl@1, DEC-256 item 5, third slice)
+- `aec skills new NAME --description D` writes an Agent Skills folder (`SKILL.md`) and never overwrites; `aec skills
+  check PATH...` checks skill folders against the Agent Skills specification (name rules and folder match, lengths,
+  known fields), reading a documented YAML subset. Example skill: `examples/skills/telosmith-records/`. See
+  `docs/integrations/agent-skills.md`.
+- The authority socket (DEC-185) as a declared field: `aec a2a card --authority-needs|accepts|grants` (and
+  `build_card(authority=...)`) adds an A2A extension to `capabilities.extensions`; `aec a2a check` checks it. The
+  declaration is never required, never a grant, and names its protocol as undecided. See
+  `docs/integrations/authority-socket.md`.
+
+### Added (AEC-R-agents-md-impl@1, DEC-256 item 4)
+- `aec agents show|write|check`: renders the governance part every Telosmith-based repository's AGENTS.md shares
+  (read-first order, authority, records and ledgers, hard rules, run and drift, a glossary pointer) from the new
+  `agents.*` keys of `.aec/config.json`, between two marker lines. `write` replaces only what lies between the markers
+  and refuses a file without them unless `--append`; `check` exits 1 when the block is missing or stale. Symlinked
+  targets are refused. See `docs/integrations/agents-md.md`.
+
+### Added (AEC-R-snippets-render-impl@1, DEC-256 item 3)
+- `aec snippets show hook|ci [--repo D] [--ref SHA]` prints the hook settings and CI job `aec init` writes, rendered
+  from `.aec/config.json` (`init.hook_style`, `init.ci_name`) and the pin in `tools/aec_upstream.json`; offline.
+  `aec snippets check` exits 1 when a committed copy under `.aec/snippets/` differs from a fresh render.
+- `init.snippet_files` (default `true`, so `aec init` is unchanged): `false` writes no `.aec/snippets/` copies.
+  See `docs/integrations/snippets.md`.
+
+### Decided (AEC-D-manifest-schema@3, DEC-256 item 7; accepted by Zach 2026-11-22, no code yet)
+- `docs/integrations/manifest.md`: a tool manifest schema, `telosmith.manifest/1.0`, as an envelope holding the MCP
+  listings, the A2A Agent Card (or `null`), Agent Skills folders, the authority declaration and runtime facts.
+  `runtime` holds `network` and `model_calls` (never, optional, required, unknown); no dependency list.
+  Example: `examples/manifest/telosmith.manifest.json`.
+
+### Changed (AEC-R-repo-config-impl@2, DEC-256 item 1, second slice)
+- `records` in `.aec/config.json` is now read by the commands whose records path is optional: `aec source show|search`,
+  `aec import-purpose` and `aec mcp` (ROOT's own file), and `aec speckit derive|drift` (the file found by discovery).
+  An explicit `--records` still wins and the config is then not read. Without the key, every default is unchanged.
+  `aec check RECORDS`, `impact`, `code-impact` and `append` still require their RECORDS argument.
+
+### Added (AEC-R-repo-config-impl@1, DEC-256 item 1, first slice)
+- `.aec/config.json`, one per repository (`AEC-D-repo-config@2`), read by `aec.config`. Without it nothing changes.
+  Schema version 1 holds `records`, `init.ci_name` and `init.hook_style`; unknown keys, wrong types and paths outside
+  the repository are errors, all reported at once. Explicit flags win over the file. `aec init` reads ROOT's own file;
+  `aec config show` and `aec config check` print and validate it. See `docs/integrations/repo-config.md`.
+
+### Changed (AEC-R-init-full-commit-pin@1)
+- `aec init` with hooks pins the generated CI job (and the install lines in its next steps) to a full 40-character
+  commit. A release tag or `main` is resolved with `git ls-remote`, an annotated tag to its commit; when no commit
+  can be established (offline, no git, an unknown or ambiguous name, a missing object, or any id or tag that git does not confirm is a commit), init writes nothing and exits non-zero with
+  the reason. `--no-hooks` needs no network. Before, it could write `@v0.x.y` or `@main`.
+
+### Added (opt-in, AEC-D-braided-dcc@1 propagation D)
+- `aec init --hook-style line` writes a one-line project hook: a launcher that calls `aec hook project`, the hook
+  body now shipped in the package, so a fix to the body reaches every repository with a Telosmith upgrade instead
+  of a settings edit per repository. Same steps and exit codes as the inline hook (side-by-side tests), plus
+  messages for "no aec importable" and "aec too old for the line". `inline` stays the default: the line does not
+  yet check that the local aec is the version CI pins, one of the gates in `docs/integrations/braided-dcc.md`.
+
+### Added (AEC-R-init-line-pin-bootstrap@1, AEC-R-init-pin-preservation@1)
+- `aec init --hook-style line` also writes `tools/aec_upstream.json` with the commit the CI snippet pins, so the
+  `aec pin-check` (and the line hook, once its launcher has the pin gate from #92) find the pin they read. An existing file (or a symlink) there is kept, never
+  overwritten; a symlinked `tools/` is never written through. The inline default and `--no-hooks` write no pin file.
+
+### Added
+- `aec pin-check [ROOT]`: exits 0 only when the installed aec (a pip install from git, PEP 610) equals the
+  commit in `tools/aec_upstream.json`, and 1 with the reason otherwise: mismatch, a missing, symlinked or unreadable
+  pin file, a pin that is not a full 40-character SHA, or an indeterminate local version (a source checkout or
+  editable install never qualifies). Workflow files are not read (owner decision `AEC-D-pin-check-scope@1`). It is
+  the check `AEC-R-hook-line-pin-gate@1` asks the one-line hook to enforce; wiring it into the line is a later PR.
+
 ### Added (draft, DEC-223 proposed design)
 - `aec hook install|uninstall|print|verify` and `aec hook run`: a user-level Claude Code hook that runs the
   installed `aec` from its own environment (`-I`, from `/`, absolute interpreter), only in repos with
@@ -34,6 +122,14 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
   dropped before `aec` starts, so an inherited absolute entry can't bring a branch's `aec.py` back; entries
   outside the checkout are kept, and relative entries now resolve from `/`. A relative `RELAYKIT_RECORDS` is
   anchored to the project, as it was when the hook ran there. (Copilot review on #77.)
+- Relative PYTHONPATH entries in that launcher are resolved against the project, as they were when the hook
+  ran there, and passed to `aec` as absolute paths. Before, they resolved from `/`, so a sibling checkout such as
+  `PYTHONPATH=../Telosmith/src` stopped importing and the hook skipped every check (Codex on Fathom#49, Today#7,
+  MtG#46). A relative entry that lands inside the checkout (`.`, `src`) is still dropped, and so is any entry
+  that is an ancestor of the checkout (which would make a checkout named `aec/` importable as `aec`) or whose
+  resolved path contains the path separator (a symlinked `src` pointing at `/x:<checkout>/payload`); Copilot on
+  #87. The ancestor case also applied to absolute entries before this change. New hook text, so a new
+  fingerprint: repositories pinning the hook need the refreshed snippet.
 
 ### Records
 - Telosmith's own purpose is now `AEC-P0@3` (Kate's wording, anchored to DEC-116); the requirements that served

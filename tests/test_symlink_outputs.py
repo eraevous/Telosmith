@@ -21,6 +21,8 @@ import sys
 import tempfile
 import unittest
 
+from _platform import BASH, NO_BASH, POSIX_MODES
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = str(ROOT / "src")
 sys.path.insert(0, SRC)
@@ -97,6 +99,7 @@ class CliOutputTests(_Tmp):
         self.assertEqual([p.name for p in dest.parent.iterdir()], ["edges.jsonl"], "no temp file left behind")
 
 
+    @unittest.skipUnless(os.name == "posix", POSIX_MODES)
     def test_rewrite_keeps_an_existing_files_mode(self):  # Copilot on #83: don't widen a private file to 0644
         dest = self.project / "private.jsonl"
         dest.write_text("old")
@@ -105,6 +108,7 @@ class CliOutputTests(_Tmp):
         self.assertEqual(dest.read_text(), "new")
         self.assertEqual(os.stat(dest).st_mode & 0o777, 0o600)
 
+    @unittest.skipUnless(os.name == "posix", POSIX_MODES)
     def test_restrictive_umask_is_honoured(self):  # Copilot on #83: a 077 umask gives 0600, like an ordinary write
         old = os.umask(0o077)
         try:
@@ -124,7 +128,7 @@ class CliOutputTests(_Tmp):
         self.assertEqual(os.stat(dest).st_mode & 0o777, 0o666 & ~umask)
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")
+@unittest.skipUnless(BASH and shutil.which("git"), NO_BASH + "; and git")
 class ProjectHookTests(_Tmp):
     def setUp(self):
         super().setUp()
@@ -136,7 +140,7 @@ class ProjectHookTests(_Tmp):
 
     def _hook(self):
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(self.project), PYTHONPATH=SRC)
-        return subprocess.run(["bash", "-c", HOOK_COMMAND], env=env, capture_output=True, text=True, timeout=120)
+        return subprocess.run([BASH, "-c", HOOK_COMMAND], env=env, capture_output=True, text=True, timeout=120)
 
     def _swap_for_link(self, rel, target):
         path = self.project / rel

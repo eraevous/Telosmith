@@ -14,6 +14,16 @@
   python -m aec source search PATTERN [--root R] [--regex]   direct fallback source search (offline)
   python -m aec speckit derive FEATURE_DIR [--check] [--insert] [--constitution FILE]  regenerate record-derived spec blocks
   aec hook install|uninstall|print [--settings FILE] | verify [--pin D]  user-level Claude hook (draft, DEC-223)
+  aec hook project PROJECT  the hook body the one-line project hook calls (init --hook-style line)
+  aec pin-check [ROOT]  exit 0 only when the installed aec equals the commit in tools/aec_upstream.json (else 1, with why)
+  aec mcp [--root ROOT] [--records PATH]  serve the records over MCP (stdio, read-only)
+  aec a2a card --name N --description D --version V --url URL [--skill ID=NAME|DESC|TAGS] [-o FILE]  A2A 1.0 Agent Card
+  aec a2a check FILE  exit 0 only when FILE has every field A2A 1.0 requires
+  aec skills new NAME --description D [--dir DIR] | check PATH...  Agent Skills (SKILL.md) folders
+  aec config show [--repo D] [--json] | check [--repo D]  the repository's .aec/config.json, resolved over defaults
+  aec agents show|write|check [--repo D] [--file F] [--append]  the shared governance block of AGENTS.md
+  aec snippets show hook|ci | check [--repo D] [--ref SHA]  render init's hook/CI snippets from the config; check copies
+  aec manifest validate FILE [--root D]  check a telosmith.manifest/1.0 tool manifest; never runs anything
   python -m aec speckit drift PATH... [--all] [--json]         spec/record drift, both directions (writes nothing)
 """
 from __future__ import annotations
@@ -24,7 +34,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, speckit, userhook
+from . import __version__, a2a, agents, config, manifest, mcp, pin, skills, snippets, speckit, userhook
 from . import edges as E
 from .impact import impact, render
 from .records import Store, check
@@ -98,7 +108,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="write the Claude Code hook and CI snippets even without Python code")
     hk.add_argument("--no-hooks", dest="hooks", action="store_const", const=False,
                     help="do not write them (default: written only when ROOT has Python code)")
-    it.add_argument("--ci-name", default="aec", help="CI workflow, job and file name (default: aec)")
+    it.add_argument("--ci-name", default=None,
+                    help="CI workflow, job and file name (default: init.ci_name in ROOT/.aec/config.json, else aec)")
+    it.add_argument("--hook-style", choices=("inline", "line"), default=None,
+                    help="inline: the whole hook body in the settings snippet (default); line: a short launcher "
+                         "that calls `aec hook project`, so the body updates with the installed package "
+                         "(an explicit flag wins over init.hook_style in ROOT/.aec/config.json)")
     anc = sub.add_parser("anchor", help="print a checked anchor (sha256 + locator) for a passage, as JSON")
     anc.add_argument("spec", metavar="[ALIAS=]PATH#LOCATOR")
     anc.add_argument("--rationale", action="store_true", help='for: "rationale" (default: "text")')
@@ -115,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     ip = sub.add_parser("import-purpose", help="import Codex++ purpose files as provisional, source-linked records")
     ip.add_argument("root", nargs="?", default=".")
     ip.add_argument("--dir", default="codex_++/purpose_files", help="purpose-file directory, relative to ROOT")
-    ip.add_argument("--records", help="default: ROOT/.aec/records.jsonl")
+    ip.add_argument("--records", help="default: records in ROOT/.aec/config.json, else ROOT/.aec/records.jsonl")
     ip.add_argument("--edges", help="default: a fresh snapshot of ROOT")
     ip.add_argument("--dry-run", action="store_true", help="report only; append nothing")
     source = sub.add_parser("source", help="offline source integrity and retrieval")
@@ -126,7 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("--max-lines", type=int, default=80)
     show.add_argument("--max-chars", type=int, default=240, help="maximum characters per source line, including truncation markers (default: 240)")
     show.add_argument("--repo", default=".", help="repository containing .aec/sources.json")
-    show.add_argument("--records", help="record file (default: ROOT/.aec/records.jsonl)")
+    show.add_argument("--records", help="record file (default: records in ROOT/.aec/config.json, else ROOT/.aec/records.jsonl)")
     search = source_sub.add_parser("search", help="search configured source roots directly", description="Search named configured roots by default; use --root to select one.")
     search.add_argument("pattern")
     search.add_argument("--root", help="configured alias, or . for the repository; default: named roots only")
@@ -134,9 +149,17 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--max", type=int, default=20, dest="max_hits")
     search.add_argument("--max-chars", type=int, default=240, help="maximum characters per hit excerpt, including truncation markers (default: 240)")
     search.add_argument("--repo", default=".", help="repository containing .aec/sources.json")
-    search.add_argument("--records", help="record file (default: ROOT/.aec/records.jsonl)")
+    search.add_argument("--records", help="record file (default: records in ROOT/.aec/config.json, else ROOT/.aec/records.jsonl)")
     speckit.add_parser(sub)
     userhook.add_parser(sub)
+    pin.add_parser(sub)
+    mcp.add_parser(sub)
+    a2a.add_parser(sub)
+    skills.add_parser(sub)
+    config.add_parser(sub)
+    agents.add_parser(sub)
+    snippets.add_parser(sub)
+    manifest.add_parser(sub)
     snap_parser = sub.add_parser("snapshot", help="snapshot a working tree or local git revision")
     snap_parser.add_argument("root", nargs="?", default=".")
     snap_parser.add_argument("--rev")
@@ -226,9 +249,13 @@ def _cmd_query(a, ap) -> int:
 
 
 def _cmd_source(a, ap) -> int:
+    from .config import ConfigError, records_path
     from .sources import SourceContext, render_search, render_show
     repo = Path(a.repo)
-    records = Path(a.records) if a.records else repo / ".aec/records.jsonl"
+    try:
+        records = records_path(a.records, repo)
+    except ConfigError as error:
+        ap.error(str(error))
     try:
         source_store = Store.load(records) if records.exists() else Store([])
         context = SourceContext(repo)
@@ -244,10 +271,18 @@ def _cmd_source(a, ap) -> int:
 
 
 def _cmd_init(a, ap) -> int:
+    from .config import ConfigError, own, resolve
     from .init import init
     try:
+        # Only ROOT's own .aec/config.json counts: init never reads a parent repository's settings.
+        cfg = own(a.root)
+    except ConfigError as error:
+        ap.error(str(error))
+    try:
         rep = init(a.root, owner=a.owner or _git_user(a.root) or "owner", purpose=a.purpose,
-                   purpose_anchor=a.purpose_anchor, hooks=a.hooks, ci_name=a.ci_name)
+                   purpose_anchor=a.purpose_anchor, hooks=a.hooks, ci_name=resolve(a.ci_name, cfg, "init.ci_name"),
+                   hook_style=resolve(a.hook_style, cfg, "init.hook_style"),
+                   snippet_files=cfg.get("init.snippet_files"))
     except ValueError as error:
         ap.error(str(error))
     for f in rep["created"]:
@@ -304,7 +339,12 @@ def _cmd_import_purpose(a, ap) -> int:
     if not (root / a.dir).is_dir():
         print(f"aec import-purpose: no purpose-file directory {root / a.dir} (use --dir)", file=sys.stderr)
         return 2
-    rep = import_purpose(root, root / a.dir, Path(a.records) if a.records else root / ".aec" / "records.jsonl",
+    from .config import ConfigError, records_path
+    try:
+        records = records_path(a.records, root)
+    except ConfigError as error:
+        ap.error(str(error))
+    rep = import_purpose(root, root / a.dir, records,
                          E.load(a.edges) if a.edges else E.snapshot(root), dry_run=a.dry_run)
     print(render_import(rep))
     return 0
@@ -394,7 +434,8 @@ HANDLERS = {
     "edges": _cmd_edges, "check": _cmd_check, "impact": _cmd_impact, "code-impact": _cmd_code_impact,
     "init": _cmd_init, "anchor": _cmd_anchor, "append": _cmd_append, "import-purpose": _cmd_import_purpose, "source": _cmd_source,
     "snapshot": _cmd_snapshot, "diff": _cmd_diff, "reach": _cmd_query, "fan": _cmd_query, "unresolved": _cmd_query,
-    "speckit": speckit.run, "hook": userhook.cli,
+    "speckit": speckit.run, "hook": userhook.cli, "pin-check": pin.cli, "mcp": mcp.cli, "a2a": a2a.cli, "skills": skills.cli,
+    "config": config.cli, "agents": agents.cli, "snippets": snippets.cli, "manifest": manifest.cli,
 }
 
 

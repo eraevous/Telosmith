@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import edges as E
 
@@ -34,6 +34,12 @@ def git(root, *args, input=None, optional=False):
     return result.stdout
 
 
+def _not_repo_relative(x):
+    # Judged the same on every OS: `/abs` is absolute even where `Path('/abs').is_absolute()` is False (Windows).
+    return (PurePosixPath(x).is_absolute() or bool(PureWindowsPath(x).anchor)
+            or '..' in PurePosixPath(x).parts or '\\' in x)
+
+
 def configuration(root, ignore=None, source_roots=None):
     path = Path(root) / CONFIG
     try:
@@ -49,11 +55,11 @@ def configuration(root, ignore=None, source_roots=None):
     if not isinstance(ignored, list) or any(not isinstance(x, str) or not x for x in ignored):
         raise ValueError('ignore must be a list of relative patterns')
     ignored = sorted(E.DEFAULT_IGNORE | set(ignored) | set(ignore or []))
-    if any(Path(x).is_absolute() or PureWindowsPath(x).drive or '..' in Path(x).parts or '\\' in x for x in ignored):
+    if any(_not_repo_relative(x) for x in ignored):
         raise ValueError('ignore patterns must be repo-relative')
     if roots != 'auto':
         if not isinstance(roots, list) or any(not isinstance(x, str) or not x or
-                Path(x).is_absolute() or PureWindowsPath(x).drive or '..' in Path(x).parts or '\\' in x for x in roots):
+                _not_repo_relative(x) for x in roots):
             raise ValueError('source_roots must be auto or relative directories')
         roots = sorted(set(roots))
     return {'tool_version': E.TOOL_VERSION, 'ignore': ignored, 'source_roots': roots,
@@ -101,6 +107,10 @@ def materialize(root, revision, destination):
     return sha, prefix or '.', skipped
 
 
+def _blob_id(algorithm, raw):
+    return hashlib.new(algorithm, b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+
+
 def working_state(root, head, seen=None):
     """Compare raw Git blobs/index/files without status, filters, hooks or refresh."""
     seen = set() if seen is None else seen
@@ -131,6 +141,13 @@ def working_state(root, head, seen=None):
     if indexed != committed or git(root, 'ls-files', '--others', '--exclude-standard', '-z', '--', '.'):
         return True, prefix or '.'
     algorithm = git(root, 'rev-parse', '--show-object-format').decode().strip()
+    # core.autocrlf (Git for Windows defaults it to true) or a text/eol attribute checks text out with
+    # CRLF over LF blobs; Git calls such a file clean, and so does this, without running any filter
+    # (AEC-R10 on Windows, #111). A file whose attributes turn conversion off (-text, binary, -crlf)
+    # keeps byte-exact comparison (Codex on #111).
+    autocrlf = (git(root, 'config', '--get', 'core.autocrlf', optional=True) or b'').decode().strip().lower()
+    crlf = autocrlf in ('true', 'yes', 'on', '1', 'input')
+    crlf_only = []
     base = Path(root).resolve()
     for name, (mode, oid) in committed.items():
         path = base / name
@@ -155,12 +172,71 @@ def working_state(root, head, seen=None):
                 raw = path.read_bytes()
                 if os.name != 'nt' and bool(path.stat().st_mode & 0o111) != (mode == '100755'):
                     return True, prefix or '.'
-            digest = hashlib.new(algorithm, b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
-            if digest != oid:
-                return True, prefix or '.'
+            if _blob_id(algorithm, raw) != oid:
+                if (mode != '120000' and b'\r\n' in raw and b'\0' not in raw
+                        and _blob_id(algorithm, raw.replace(b'\r\n', b'\n')) == oid):
+                    crlf_only.append((name, raw))  # clean only if Git converts this file's line endings
+                else:
+                    return True, prefix or '.'
         except (OSError, RuntimeError):
             return True, prefix or '.'
+    if crlf_only and not _line_endings_converted(root, crlf_only, crlf):
+        return True, prefix or '.'
     return False, prefix or '.'
+
+
+def _looks_binary(raw):
+    """Git's content heuristic for automatic conversion (convert.c): a lone CR, a NUL, or more than one
+    non-printable byte per 128 printable ones makes a file binary, so `text=auto`/autocrlf leave it alone."""
+    if raw.endswith(b'\x1a'):
+        raw = raw[:-1]  # a trailing DOS end-of-file mark is ignored
+    printable = nonprintable = 0
+    for i, c in enumerate(raw):
+        if c == 13:
+            if raw[i + 1:i + 2] != b'\n':
+                return True
+        elif c == 0:
+            return True
+        elif c == 10:
+            continue  # line endings count as neither printable nor not (Git's gather_stats)
+        elif c == 127 or (c < 32 and c not in (8, 9, 12, 27)):
+            nonprintable += 1
+        else:
+            printable += 1
+    return (printable >> 7) < nonprintable
+
+
+def _line_endings_converted(root, entries, autocrlf):
+    """True when Git converts line endings for every (name, raw) entry. Git's own effective reading of the text,
+    eol and legacy crlf attributes comes from `ls-files --eol` (a literal `text=set` is not boolean `text` there);
+    other clean transforms from check-attr. No filter runs. Automatic conversion also needs Git's binary heuristic."""
+    names = [name for name, _ in entries]
+    out = git(root, 'check-attr', '-z', '--stdin', 'working-tree-encoding', 'filter', 'ident',
+              input=b''.join(os.fsencode(n) + b'\0' for n in names), optional=True)
+    eols = git(root, 'ls-files', '--eol', '-z', '--', '.', optional=True)
+    if out is None or eols is None:
+        return False
+    fields = out.split(b'\0')
+    attrs = {}
+    for i in range(0, len(fields) - 2, 3):
+        attrs.setdefault(os.fsdecode(fields[i]), {})[fields[i + 1].decode()] = fields[i + 2].decode()
+    effective = {}
+    for row in eols.split(b'\0'):
+        if b'\t' in row:
+            info, path = row.split(b'\t', 1)
+            effective[os.fsdecode(path)] = info.decode(errors='replace').partition('attr/')[2].strip()
+    for name, raw in entries:
+        a = attrs.get(name, {})
+        if any(a.get(k, 'unspecified') not in ('unspecified', 'unset') for k in ('working-tree-encoding', 'filter', 'ident')):
+            return False  # another clean transform applies; stay dirty rather than guess it (Codex on #111)
+        attr = effective.get(name)
+        if attr is None or attr.startswith('-text'):
+            return False  # unknown to the index, or -text/binary/-crlf: Git compares bytes, so a CRLF edit is an edit
+        if attr.startswith('text') and not attr.startswith('text=auto'):
+            continue  # forced text (text, eol=..., crlf, crlf=input): converted whatever the content
+        if not (attr.startswith('text=auto') or autocrlf) or _looks_binary(raw):
+            return False  # automatic conversion (text=auto, or autocrlf) skips binary-looking files
+    return True
 
 
 def snapshot(root, ignore=None, *, rev=None, method=None, source_roots=None):

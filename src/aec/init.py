@@ -6,6 +6,7 @@ it. Standard library only.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -51,12 +52,20 @@ remaining evidence is good enough. That stays a review question.
 # the function's subshell only (#77 review): a relative RELAYKIT_RECORDS is anchored to the project (it
 # meant the working directory, which was the project; after `cd /` it would mean /), and PYTHONPATH loses
 # every entry that resolves inside the checkout (an absolute entry there would still import a branch's
-# aec.py). Entries outside the checkout are kept; relative entries now resolve from /, not the checkout.
+# aec.py). Entries outside the checkout are kept. A relative entry meant the working directory, which was the
+# project, so it is resolved against the project and passed on as an absolute path; after `cd /` it would
+# mean / (Codex on Fathom#49, Today#7, MtG#46: a sibling checkout `PYTHONPATH=../Telosmith/src` stopped importing).
+# Two more entries are dropped (Copilot on #87): an ancestor of the checkout, which would make the checkout
+# itself importable under its directory name (a checkout named aec/ would shadow Telosmith), and a resolved
+# entry containing the path separator, which a symlink a branch plants could otherwise use to smuggle in a
+# second entry that points inside the checkout.
 # The filter runs in an isolated interpreter (-I: no PYTHONPATH, no user site) that also starts from /.
 HOOK_PATHFILTER = (
-    "import os,sys; p=os.path.join(os.path.realpath(sys.argv[1]),''); "
-    "print(os.pathsep.join(e for e in os.environ.get('PYTHONPATH','').split(os.pathsep) "
-    "if e and not os.path.join(os.path.realpath(e),'').startswith(p)))"
+    "import os,sys; b=os.path.realpath(sys.argv[1]); p=os.path.join(b,''); "
+    "r=lambda a: os.path.join(os.path.realpath(a),''); "
+    "print(os.pathsep.join(a for a in (e if os.path.isabs(e) else os.path.realpath(os.path.join(b,e)) "
+    "for e in os.environ.get('PYTHONPATH','').split(os.pathsep) if e) "
+    "if os.pathsep not in a and not r(a).startswith(p) and not p.startswith(r(a))))"
 )
 HOOK_AEC = (
     "P=\"$CLAUDE_PROJECT_DIR\"; aec() { ( "
@@ -97,6 +106,78 @@ HOOK = {
     }
 }
 
+# One-line form (AEC-D-braided-dcc@1, propagation D; opt-in with `aec init --hook-style line`). The hook body
+# lives in the installed package (`aec hook project`, src/aec/userhook.py), so a fix to the body ships with a
+# Telosmith release and the settings text in each repository stays the same. Exit codes match HOOK_COMMAND:
+# 0 quiet, 1 a step could not run, 2 a report for the agent. Nothing blocks: PostToolUse runs after the edit.
+#
+# What stays in the line is what must run before any aec is imported: the pre-import gate below
+# (Kate's AEC-R-hook-launcher-preimport@1 and AEC-R-hook-line-pin-gate@1, under AEC-D-pin-check-scope@1). It is
+# settings text, not package code, so nothing the gate is checking runs before it. One `python3 -I -B` process:
+# -I ignores PYTHONPATH, the user site and the working directory, so no sitecustomize, .pth or shadow module from
+# an environment path runs at startup; -B writes no bytecode. In that process the gate
+#   1. reads the pin, `commit` in tools/aec_upstream.json: a regular file, not a symlink, a full 40-character SHA;
+#   2. puts the user site (`pip install --user`) where a normal start would, ahead of the system site-packages,
+#      unless PYTHONNOUSERSITE is set or this is a virtual environment (where pip refuses --user anyway); it is
+#      added as a plain path, so its .pth files and usercustomize never run. Then appends the filtered PYTHONPATH
+#      entries (never the project) after the interpreter's own path, so they can add an aec but never shadow the
+#      standard library, and finds `aec` without importing it (Codex P2 on MtG#59);
+#   3. requires that package to belong to an installed telosmith distribution whose PEP 610 direct_url.json is a
+#      non-editable git install of exactly the pinned commit, outside the project; a source checkout, an
+#      editable install or any other aec fails (AEC-R-pin-check-local-identity@2);
+#   4. only then loads that aec from the spec it checked (its submodules come from the same directory) and runs
+#      `aec hook project` in the same process, so the import path is not searched again between check and run.
+# Any failure prints one line naming what is missing and exits 1 before any aec code runs. Out of scope, as in
+# AEC-R-pin-check@8: tampering with the installed environment itself (the user-level hook verifies RECORD).
+HOOK_LINE_GATE = (
+    "import sys,os,json,re,runpy,site,importlib.util as u,importlib.metadata as m\n"
+    "P=os.path.realpath(sys.argv[1]);S=os.sep\n"
+    "def no(t):print('Telosmith hook: '+t,file=sys.stderr);sys.exit(1)\n"
+    "f=os.path.join(P,'tools','aec_upstream.json')\n"
+    "try:c=json.load(open(f)) if os.path.isfile(f) and not os.path.islink(f) else {};c=c.get('commit')\n"
+    "except Exception:c=None\n"
+    "if not(isinstance(c,str) and re.fullmatch('[0-9a-f]{40}',c)):no(f+' names no full commit; the line hook runs "
+    "only the aec your CI pins there')\n"
+    "U=site.getusersitepackages()\n"
+    "if not os.environ.get('PYTHONNOUSERSITE') and sys.prefix==sys.base_prefix and os.path.isdir(U):"
+    "G=set(site.getsitepackages());sys.path.insert(next((i for i,x in enumerate(sys.path) if x in G),"
+    "len(sys.path)),U)\n"
+    "sys.path+=[a for a in sys.argv[2].split(os.pathsep) if a]\n"
+    "s=u.find_spec('aec');o=s and s.origin\n"
+    "if not o:no('no aec is importable here; install Telosmith at the commit your CI job pins (pip install "
+    + AEC_SOURCE + "@'+c+')')\n"
+    "L=os.path.realpath(os.path.dirname(o))\n"
+    "d=[x for x in m.distributions(name='telosmith') if os.path.realpath(x.locate_file('aec'))==L]\n"
+    "try:v=json.loads(d[0].read_text('direct_url.json'))\n"
+    "except Exception:v={}\n"
+    "D=lambda x:x if isinstance(x,dict) else {}\n"
+    "v=D(v);g=D(v.get('vcs_info'));t=v.get('dir_info',{})\n"
+    "if (L+S).startswith(P+S) or not isinstance(t,dict) or t.get('editable') or g.get('vcs')!='git' or "
+    "g.get('commit_id')!=c:no('the aec at '+L+' is not a non-editable pip install from git of the pinned commit "
+    "'+c[:12]+' (tools/aec_upstream.json; installed: '+str(g.get('commit_id') or 'no git commit')[:12]+'); "
+    "install it with pip install " + AEC_SOURCE + "@'+c)\n"
+    "a=sys.modules['aec']=u.module_from_spec(s)\n"
+    "try:s.loader.exec_module(a);import aec.userhook as h;h.project_run\n"
+    "except Exception:no('the pinned aec has no hook project; pin Telosmith 0.6.0 or later, or go back to the "
+    "inline hook: aec init --hooks --hook-style inline')\n"
+    "sys.argv=['aec','hook','project',P];runpy.run_module('aec',run_name='__main__',alter_sys=True)"
+)
+HOOK_LINE_COMMAND = (
+    "P=\"$CLAUDE_PROJECT_DIR\"; cd \"$P\" || exit 0; "
+    "cd / && pp=$(python3 -I -c \"" + HOOK_PATHFILTER + "\" \"$P\") || exit 1; "
+    "python3 -I -B -c \"" + HOOK_LINE_GATE + "\" \"$P\" \"$pp\""
+)
+
+HOOK_LINE = {
+    "hooks": {
+        "PostToolUse": [{
+            "matcher": "Edit|Write|MultiEdit",
+            "hooks": [{"type": "command", "command": HOOK_LINE_COMMAND, "timeout": 30}],
+        }]
+    }
+}
+HOOK_STYLES = {"inline": HOOK, "line": HOOK_LINE}
+
 # Report-only: compares the merge-base with this checkout and writes the report to the job summary, where a
 # reviewer sees it on the run page. Never fails the job (a code change is not an error).
 CI_IMPACT = """base=$(git merge-base "$AEC_BASE" HEAD 2>/dev/null) || base=""
@@ -119,14 +200,21 @@ def _release(version: str) -> tuple[int, ...] | None:
 
 def _installed_commit() -> str | None:
     """The commit this package was pip-installed from (PEP 610 `direct_url.json`), when that install is the
-    code running now; None for a source checkout, an editable install or a wheel from an index."""
+    code running now; None for a source checkout, an editable install, a wheel from an index, or an install from
+    another version-control system (only `vcs_info.vcs == "git"` counts: Copilot on #90, 14c200f)."""
     try:
         from importlib import metadata
         dist = metadata.distribution("telosmith")
         if Path(str(dist.locate_file("aec"))).resolve() != Path(__file__).resolve().parent:
             return None
-        sha = json.loads(dist.read_text("direct_url.json") or "{}").get("vcs_info", {}).get("commit_id", "")
-        return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+        data = json.loads(dist.read_text("direct_url.json") or "{}")
+        if (data.get("dir_info") or {}).get("editable"):
+            return None
+        vcs = data.get("vcs_info") or {}
+        if vcs.get("vcs") != "git":
+            return None
+        sha = vcs.get("commit_id", "")
+        return sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else None
     except Exception:  # noqa: BLE001 - any metadata problem means "unknown"
         return None
 
@@ -183,6 +271,123 @@ def resolve_install_ref(version: str = __version__, commit: str | None = None,
     return install_ref(version, commit), None
 
 
+class PinResolutionError(ValueError):
+    """`aec init` could not establish the full commit for the Telosmith revision it would pin."""
+
+
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def resolve_commit(rev: str, source: str = AEC_SOURCE, local: Path | None = None,
+                   timeout: float = 20) -> str:
+    """The full commit object ID for `rev`, or PinResolutionError (AEC-R-init-full-commit-pin@1).
+
+    A full 40-character id is kept as given once git confirms it names a commit (in `local` when given, else
+    at `source`). An abbreviated commit is resolved only in `local`, a git
+    checkout of Telosmith, where `git rev-parse` refuses an ambiguous prefix and a non-commit object. A
+    branch or tag name is resolved with `git ls-remote` against `source`: an annotated tag gives its peeled
+    commit, never the tag object; a name that is both a tag and a branch on different commits is ambiguous.
+    Nothing is guessed: any other outcome (offline, no git, unknown name) raises with the reason."""
+    if not isinstance(rev, str) or not rev or rev.startswith("-") or any(c.isspace() for c in rev):
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: not a commit, branch or tag name")
+    url = source[4:] if source.startswith("git+") else source
+    if _FULL_SHA.fullmatch(rev):
+        # Full length is syntax, not identity (Kate, round 10): ask git that the id names a commit, in the
+        # Telosmith checkout it came from when there is one, else at the source.
+        kind, why = (_local_object_type(local, rev, timeout) if local is not None
+                     else _remote_object_type(url, rev, timeout))
+        if kind != "commit":
+            where = str(local) if local is not None else url
+            raise PinResolutionError(f"cannot pin Telosmith revision {rev[:12]}: " + (
+                f"it is a {kind} in {where}, not a commit" if kind
+                else f"could not read that object from {where} ({why})"))
+        return rev
+    if re.fullmatch(r"[0-9a-f]{4,39}", rev):
+        if local is None:
+            raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: an abbreviated commit can only "
+                                     "be resolved in a Telosmith checkout; give the full 40-character commit")
+        try:
+            out = subprocess.run(["git", "-C", str(local), "rev-parse", "--verify", "--quiet", "--end-of-options",
+                                  f"{rev}^{{commit}}"], capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: git failed ({error})") from None
+        sha = out.stdout.strip()
+        if out.returncode or not _FULL_SHA.fullmatch(sha):
+            raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: no single commit with that prefix "
+                                     f"in {local} (unknown, ambiguous or not a commit)")
+        return sha
+    try:
+        out = subprocess.run(["git", "ls-remote", "--", url, f"refs/tags/{rev}", f"refs/tags/{rev}^{{}}",
+                              f"refs/heads/{rev}"], capture_output=True, text=True, timeout=timeout,
+                             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    except (OSError, subprocess.SubprocessError) as error:
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: git ls-remote failed ({error})") from None
+    if out.returncode:
+        reason = (out.stderr.strip().splitlines() or ["no reason given"])[-1]
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: git ls-remote {url} failed ({reason})")
+    refs = {}
+    for line in out.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        if _FULL_SHA.fullmatch(sha):
+            refs[name] = sha
+    tag = refs.get(f"refs/tags/{rev}^{{}}") or refs.get(f"refs/tags/{rev}")
+    head = refs.get(f"refs/heads/{rev}")
+    if tag and head and tag != head:
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: it names both a tag ({tag[:12]}) and a "
+                                 f"branch ({head[:12]}); give the full commit")
+    if not (tag or head):
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: no tag or branch of that name at {url}")
+    sha = tag or head
+    # ls-remote gives ids, not object types: a tag can name a tree or a blob (Codex on #91). Fetch that one
+    # object, shallow, into a throwaway repository and ask git what it is.
+    kind, why = _remote_object_type(url, sha, timeout)
+    if kind != "commit":
+        raise PinResolutionError(f"cannot pin Telosmith revision {rev!r}: it names {sha[:12]}, " + (
+            f"which is a {kind}, not a commit" if kind else f"which could not be fetched ({why})"))
+    return sha
+
+
+def _git_reason(out) -> str:
+    """The last line git wrote to stderr, or the exit status."""
+    lines = (out.stderr or "").strip().splitlines()
+    return lines[-1] if lines else f"git exited {out.returncode}"
+
+
+def _local_object_type(local: Path, sha: str, timeout: float) -> tuple[str | None, str]:
+    """(type of object `sha` in the git checkout at `local`, or None; git's reason when None)."""
+    try:
+        out = subprocess.run(["git", "-C", str(local), "cat-file", "-t", sha], capture_output=True, text=True,
+                             timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f"git failed: {error}"
+    kind = out.stdout.strip() if out.returncode == 0 else ""
+    return (kind, "") if kind else (None, _git_reason(out))
+
+
+def _remote_object_type(url: str, sha: str, timeout: float) -> tuple[str | None, str]:
+    """(type of object `sha` at `url` ("commit", "tree", ...), or None; why it couldn't be fetched when None).
+    Git's own message is kept, so a network failure or timeout isn't reported as a missing object (Copilot
+    on #91)."""
+    import tempfile
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        with tempfile.TemporaryDirectory(prefix="aec-pin-") as tmp:
+            run = functools.partial(subprocess.run, capture_output=True, text=True, timeout=timeout, env=env)
+            out = run(["git", "init", "-q", "--bare", tmp])
+            if out.returncode:
+                return None, f"git init failed: {_git_reason(out)}"
+            out = run(["git", "-C", tmp, "fetch", "-q", "--depth=1", "--no-tags", "--", url, sha])
+            if out.returncode:
+                return None, f"git fetch failed: {_git_reason(out)}"
+            out = run(["git", "-C", tmp, "cat-file", "-t", sha])
+            kind = out.stdout.strip() if out.returncode == 0 else ""
+            return (kind, "") if kind else (None, _git_reason(out))
+    except subprocess.TimeoutExpired:
+        return None, f"git timed out after {timeout:g}s"
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f"git failed: {error}"
+
+
 def __getattr__(name):  # CI is resolved on first use, not at import (resolving it may run git)
     if name == "CI":
         return ci_snippet(resolve_install_ref(__version__, _installed_commit())[0])
@@ -235,6 +440,22 @@ hook-before.jsonl
 """
 
 
+PIN_FILE = Path("tools") / "aec_upstream.json"   # the one pin source (AEC-D-pin-check-scope@1; pin.UPSTREAM_FILE)
+
+
+def pin_json(commit: str) -> str:
+    """The pin file `aec init --hook-style line` writes: MtG's format, reduced to what the hook and pin-check read."""
+    return json.dumps({
+        "_doc": "The Telosmith commit this repository follows. `aec pin-check` compares the installed aec "
+                "against it. A one-line Claude Code hook enforces it only when its launcher carries the "
+                "pre-import pin gate (Telosmith#92, AEC-R-hook-line-pin-gate@1); without that gate the hook does "
+                "not read this file. Keep the CI job's install line on the same commit. Written by aec init; "
+                "edit it to move the pin.",
+        "repo": "https://github.com/eraevous/Telosmith",
+        "commit": commit,
+    }, indent=2) + "\n"
+
+
 STUB_PURPOSE = "TODO: the owner states what this project is for (stub from aec init)"
 
 
@@ -252,20 +473,31 @@ def _records(owner: str, purpose: str | None = None, anchor: dict | None = None)
     return "\n".join(r if isinstance(r, str) else json.dumps(r) for r in rows) + "\n"
 
 
+# A CI name names a workflow file and a job; .aec/config.json (init.ci_name) is checked against the same pattern.
+CI_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+
+
 def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_anchor: str | None = None,
-         hooks: bool | None = None, ci_name: str = "aec") -> dict:
+         hooks: bool | None = None, ci_name: str = "aec", hook_style: str = "inline",
+         snippet_files: bool = True) -> dict:
     """Scaffold .aec/ without overwriting anything.
 
     purpose: the text of P0@1 instead of the stub (still provisional: the owner commits it by appending P0@2).
     purpose_anchor: `PATH#LOCATOR` in ROOT that the purpose cites; hashed and checked now (DEC-095).
     hooks: write the Claude Code hook and CI snippets. None (default) writes them only when ROOT has Python
     code, since code-impact has nothing to report in a repository without it.
-    ci_name: the CI workflow's name, job id and file name (default `aec`)."""
+    ci_name: the CI workflow's name, job id and file name (default `aec`).
+    hook_style: `inline` (default) writes the whole hook body into the settings snippet; `line` writes a short
+    launcher that calls `aec hook project`, so the body updates with the installed package (opt-in).
+    snippet_files: write the snippets under .aec/snippets/ (default). False writes none; the next steps name
+    `aec snippets show hook|ci`, which renders the same text from the config on demand (DEC-256 item 3)."""
     root = Path(root)
     aec = root / ".aec"
     created, kept = [], []
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", ci_name or ""):
+    if not CI_NAME.fullmatch(ci_name or ""):
         raise ValueError(f"--ci-name {ci_name!r}: use letters, digits, - and _ (it names a workflow file and a job)")
+    if hook_style not in HOOK_STYLES:
+        raise ValueError(f"--hook-style {hook_style!r}: use one of {', '.join(HOOK_STYLES)}")
     if purpose_anchor and not purpose:
         raise ValueError("--purpose-anchor needs --purpose: an anchor cites the text of a stated purpose")
     anchor = None
@@ -276,6 +508,21 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     snapshot = E.snapshot(root)
     if hooks is None:
         hooks = snapshot["header"]["files"] > 0
+    ref, note = None, None
+    if hooks:
+        # The snippet and the next steps name one full commit (AEC-R-init-full-commit-pin@1). A release tag or
+        # `main` is resolved now; if that fails, init stops here, before anything is written.
+        installed = _installed_commit()
+        ref, note = resolve_install_ref(__version__, installed)
+        # A checkout's HEAD (the note says so) is checked in that checkout, so an unpushed HEAD still works;
+        # anything else is checked at the Telosmith source.
+        local = Path(__file__).resolve().parent if note and ref != installed else None
+        try:
+            ref = resolve_commit(ref, local=local)
+        except PinResolutionError as error:
+            raise PinResolutionError(f"{error}. Install Telosmith from git at a commit "
+                                     f"(pip install \"{AEC_SOURCE}@<commit>\") and run init again, or run it "
+                                     "with --no-hooks to skip the hook and CI snippets") from None
 
     def put(rel: str, make):
         p = aec / rel
@@ -291,11 +538,25 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     put("README.md", lambda: README)
     # v0.4.1: the snapshot is generated; committing it makes every pair of code-touching PRs conflict.
     put(".gitignore", lambda: GITIGNORE)
-    ref, note = None, None
-    if hooks:
-        put("snippets/claude-settings.json", lambda: json.dumps(HOOK, indent=2) + "\n")
-        ref, note = resolve_install_ref(__version__, _installed_commit())
+    if hooks and snippet_files:
+        put("snippets/claude-settings.json", lambda: json.dumps(HOOK_STYLES[hook_style], indent=2) + "\n")
         put(f"snippets/{ci_name}-ci.yml", lambda: ci_snippet(ref, ci_name))
+    pin_state = None
+    if hooks and hook_style == "line":
+        # aec pin-check, and the line hook once its launcher has the pin gate (AEC-R-hook-line-pin-gate@1, #92),
+        # read tools/aec_upstream.json, so the repository needs that file: write it with the commit the CI snippet pins, never over an existing one,
+        # and never through a symlinked tools/ directory (AEC-R-init-writes-pin-file-impl@2).
+        pin_key = PIN_FILE.as_posix()
+        tools = root / PIN_FILE.parent
+        if os.path.islink(tools) or (os.path.lexists(tools) and not tools.is_dir()):
+            pin_state = "blocked"
+        elif os.path.lexists(root / PIN_FILE):  # a dangling symlink counts as present
+            pin_state = "kept"
+            kept.append(pin_key)
+        else:
+            E.write_replacing(root / PIN_FILE, pin_json(ref))
+            pin_state = "created"
+            created.append(pin_key)
 
     spec_kit = (root / ".specify").is_dir()
     steps = []
@@ -304,13 +565,47 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
                      '"epistemic": "committed".')
     else:
         steps.append("Replace the purpose stub P0 in .aec/records.jsonl with your own statement (append version 2).")
-    if hooks:
+    if hooks and not snippet_files:  # no copies: the same text comes from `aec snippets show` (snippets.py)
+        # The commands carry the resolved values, so a flag given to init (not in the config) still applies.
+        steps += [f"Merge the output of `aec snippets show hook --hook-style {hook_style}` into .claude/settings.json "
+                  "(init.snippet_files is false, so no copy was written under .aec/snippets/).",
+                  f"Write the output of `aec snippets show ci --ci-name {ci_name} --ref {ref}` to "
+                  f".github/workflows/{ci_name}.yml."]
+    if hooks and snippet_files:
         steps += ["Copy .aec/snippets/claude-settings.json into .claude/settings.json (merge if one exists).",
-                  f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml"
-                  + (" (it pins @main: replace it with a commit SHA you have reviewed)."
-                     if ref == "main" else "."),
-                  "The hook runs the aec installed in your environment: it needs `code-impact --exit-code` "
-                  f"(Telosmith 0.5.0 or later: pip install \"{AEC_SOURCE}@{ref}\")."]
+                  (f"Copy .aec/snippets/{ci_name}-ci.yml into .github/workflows/{ci_name}.yml (it pins Telosmith "
+                   f"commit {ref})." if f".aec/snippets/{ci_name}-ci.yml" in created else
+                   f".aec/snippets/{ci_name}-ci.yml already existed and was kept, not regenerated, so its pin may "
+                   f"not be {ref}: check that it pins the same commit as your local install below."),
+                  ("The hook runs the aec installed in your environment: it needs `code-impact --exit-code` "
+                   f"(Telosmith 0.5.0 or later: pip install \"{AEC_SOURCE}@{ref}\")."
+                   if hook_style == "inline" else
+                   "The one-line hook runs `aec hook project` from the aec installed in your environment "
+                   f"(pip install \"{AEC_SOURCE}@{ref}\"); a newer Telosmith updates the hook body without "
+                   "editing .claude/settings.json. To go back, run `aec init --hooks --hook-style inline` in an empty "
+                   "directory and copy its .aec/snippets/claude-settings.json over.")]
+    if hooks:
+        if not snippet_files:
+            steps.append("The hook runs the aec installed in your environment: it needs `code-impact --exit-code` "
+                         f"(Telosmith 0.5.0 or later: pip install \"{AEC_SOURCE}@{ref}\")."
+                         if hook_style == "inline" else
+                         "The one-line hook runs `aec hook project` from the aec installed in your environment "
+                         f"(pip install \"{AEC_SOURCE}@{ref}\"); a newer Telosmith updates the hook body without "
+                         "editing .claude/settings.json. To go back, set init.hook_style to inline and merge `aec "
+                         "snippets show hook` over it.")
+        if pin_state == "created":
+            steps.append(f"Commit {PIN_FILE.as_posix()}: it pins Telosmith commit {ref}, the commit aec pin-check "
+                         "compares against. The line hook enforces it only once its launcher has the pin gate "
+                         "(Telosmith#92); until then run aec pin-check yourself. Move it and the CI job's commit "
+                         "together.")
+        elif pin_state == "kept":
+            steps.append(f"{PIN_FILE.as_posix()} already existed and was kept, not rewritten: aec pin-check (and a "
+                         f"gated line hook, Telosmith#92) compare against it, so check that it names {ref} or "
+                         "install the commit it names.")
+        elif pin_state == "blocked":
+            steps.append(f"{PIN_FILE.as_posix()} was not written: {PIN_FILE.parent.as_posix()} is a symlink or not "
+                         "a directory. Until a regular file there names a full commit, aec pin-check fails (and so "
+                         "would a gated line hook, Telosmith#92).")
     else:
         steps.append("No hook or CI snippet written: " + ("this repository has no Python code, so code-impact has "
                      "nothing to report. Re-run `aec init --hooks` after adding code." if snapshot["header"]["files"] == 0
@@ -321,6 +616,6 @@ def init(root: str | Path, owner: str, *, purpose: str | None = None, purpose_an
     if spec_kit:
         steps.insert(1, "Spec Kit detected. Register the Telosmith hooks (report-only, removable): "
                         "specify extension add --dev <path-to-Telosmith-checkout>/extension")
-    if note and f".aec/snippets/{ci_name}-ci.yml" in created:
+    if note and (f".aec/snippets/{ci_name}-ci.yml" in created or (hooks and not snippet_files)):
         steps.insert(0, "Note: " + note)
     return {"created": created, "kept": kept, "spec_kit": spec_kit, "next_steps": "\n".join(steps)}

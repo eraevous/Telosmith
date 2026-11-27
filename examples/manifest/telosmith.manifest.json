@@ -1,0 +1,110 @@
+{
+  "manifest": "telosmith.manifest/1.0",
+  "tool": {
+    "id": "telosmith",
+    "name": "Telosmith",
+    "version": "0.5.0",
+    "description": "Governance records for agentic coding: purpose, requirement and decision records, checks, and the sockets every Dev Kit tool shares."
+  },
+  "sockets": {
+    "mcp": {
+      "transport": "stdio",
+      "command": [
+        "python3",
+        "-m",
+        "aec",
+        "mcp"
+      ],
+      "protocolVersions": [
+        "2025-11-25",
+        "2025-06-18",
+        "2025-03-26",
+        "2024-11-05"
+      ],
+      "serverInfo": {
+        "name": "telosmith",
+        "version": "0.5.0"
+      },
+      "capabilities": {
+        "tools": {
+          "listChanged": false
+        }
+      },
+      "tools": [
+        {
+          "name": "records_list",
+          "description": "List records (latest version of each id by default), filtered by type or id prefix.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "record type, e.g. requirement or decision"
+              },
+              "id_prefix": {
+                "type": "string"
+              },
+              "all_versions": {
+                "type": "boolean",
+                "default": false
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 200
+              }
+            }
+          }
+        },
+        {
+          "name": "record_get",
+          "description": "Get one record by id (its latest version) or by id@version.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "ref"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "name": "records_check",
+          "description": "Run `aec check` over the records (no edge snapshot). Structural only: a clean result does not establish that a conclusion is true.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "resources": [],
+      "resourceTemplates": [],
+      "prompts": [],
+      "listPolicy": {}
+    },
+    "a2a": null,
+    "skills": [
+      {
+        "path": "examples/skills/telosmith-records",
+        "name": "telosmith-records",
+        "description": "Read and check a Telosmith-based repository's purpose, requirement and decision records (.aec/records.jsonl) before changing code. Use when a repository has an .aec/ folder and the task touches code a record anchors, or when asked what a module is for or whether a change drifts from its purpose."
+      }
+    ],
+    "authority": {
+      "needs": [
+        "read the repository's .aec/records.jsonl"
+      ],
+      "accepts": [],
+      "grants": [],
+      "protocol": "undecided (DEC-185)"
+    },
+    "other": []
+  },
+  "runtime": {
+    "network": "never",
+    "model_calls": "never"
+  }
+}

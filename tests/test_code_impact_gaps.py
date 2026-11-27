@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from _platform import BASH, NO_BASH
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from aec import edges as E  # noqa: E402
@@ -162,7 +164,7 @@ class TestReachedChanges(unittest.TestCase):
         self.assertEqual([f for f in findings if "reaches changed" in f], [])
 
 
-@unittest.skipUnless(shutil.which("git") and shutil.which("bash"), "needs git and bash")
+@unittest.skipUnless(shutil.which("git") and BASH, "needs git; " + NO_BASH)
 class TestDelivery(unittest.TestCase):
     """Gap 3: the generated hook and CI ran `check` only. They now run `code-impact` against HEAD / the PR base
     and surface the report: to the agent (hook stderr, exit 2) and to the reviewer (CI job summary)."""
@@ -189,7 +191,7 @@ class TestDelivery(unittest.TestCase):
     def hook(self, d: Path):
         cmd = json.loads((d / ".aec" / "snippets" / "claude-settings.json").read_text())
         command = cmd["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
-        return subprocess.run(["bash", "-c", command], capture_output=True, text=True, env=self.env(d))
+        return subprocess.run([BASH, "-c", command], capture_output=True, text=True, env=self.env(d))
 
     def test_hook_tells_the_agent_when_linked_code_reaches_a_change(self):  # violating
         d = self.repo()
@@ -211,7 +213,7 @@ class TestDelivery(unittest.TestCase):
         env = {**self.env(d), "GITHUB_STEP_SUMMARY": str(summary), "AEC_BASE": base}
         subprocess.run([sys.executable, "-m", "aec", "edges", ".", "-o", ".aec/edges.jsonl"], cwd=d, check=True,
                        env=env, capture_output=True)  # the job's preceding step
-        r = subprocess.run(["bash", "-c", CI_IMPACT], cwd=d, capture_output=True, text=True, env=env)
+        r = subprocess.run([BASH, "-c", CI_IMPACT], cwd=d, capture_output=True, text=True, env=env)
         return r, summary.read_text() if summary.exists() else ""
 
     def test_ci_puts_the_report_in_the_job_summary(self):  # violating
@@ -336,7 +338,7 @@ class TestFixRoundHook(unittest.TestCase):
         cmd = json.loads((d / ".aec" / "snippets" / "claude-settings.json").read_text())
         command = cmd["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
         env = {**self.env(d), "PYTHONPATH": str(stub.parent)}
-        r = subprocess.run(["bash", "-c", command], capture_output=True, text=True, env=env)
+        r = subprocess.run([BASH, "-c", command], capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 1, r.stderr)  # non-blocking; shown to the user
         self.assertIn("v0.5.0", r.stderr)
 

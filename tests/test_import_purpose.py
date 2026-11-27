@@ -181,7 +181,7 @@ class TestContracts(unittest.TestCase):
 
     def test_structured_fields_and_raw_document(self):
         c = self.store.latest['PC-structured']
-        raw = (self.d / PURPOSE_DIR / 'structured.purpose.md').read_text()
+        raw = (self.d / PURPOSE_DIR / 'structured.purpose.md').read_bytes().decode('utf-8')  # raw: no newline translation
         self.assertEqual(c.get('declared_raw'), raw)
         self.assertEqual(c.get('declared_io'), [
             {'direction': 'input', 'name': 'data', 'type': '`str`', 'description': 'raw data', 'extra': 'retained'},
@@ -201,7 +201,7 @@ class TestContracts(unittest.TestCase):
         c = self.store.latest['PC-long']
         self.assertGreater(len(c.get('declared_text')), 5000)
         self.assertTrue(c.get('declared_text').endswith('END-OF-DECLARATION'))
-        self.assertEqual(c.get('declared_raw'), (self.d / PURPOSE_DIR / 'long.purpose.md').read_text())
+        self.assertEqual(c.get('declared_raw'), (self.d / PURPOSE_DIR / 'long.purpose.md').read_bytes().decode('utf-8'))
 
     def test_all_heading_variants_and_split_io(self):
         from aec.purpose_import import parse
@@ -241,7 +241,7 @@ class TestContracts(unittest.TestCase):
         p.write_text('@ai-source-file: <file.py>\n@ai-intent: A template\n')
         try:
             report = run(self.d)
-            self.assertIn(str(p.relative_to(self.d)), [s['file'] for s in report['skipped']])
+            self.assertIn(p.relative_to(self.d).as_posix(), [s['file'] for s in report['skipped']])
         finally:
             p.unlink()
 

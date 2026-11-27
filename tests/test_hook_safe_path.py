@@ -10,15 +10,16 @@ nothing there.
 import json
 import os
 import pathlib
-import shutil
 import subprocess
 import tempfile
 import unittest
 
+from _platform import BASH, NO_BASH, bash_native
+
 from aec.init import HOOK_COMMAND
 
 
-@unittest.skipUnless(shutil.which("bash"), "needs bash")
+@unittest.skipUnless(BASH, NO_BASH)
 class HookSafePathTests(unittest.TestCase):
     def test_hook_never_imports_a_checkout_aec(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -32,7 +33,7 @@ class HookSafePathTests(unittest.TestCase):
                 (project / f"{name}.py").write_text(shadow)
             env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
             env.pop("PYTHONPATH", None)
-            subprocess.run(["bash", "-c", HOOK_COMMAND], env=env, capture_output=True, timeout=60)
+            subprocess.run([BASH, "-c", HOOK_COMMAND], env=env, capture_output=True, timeout=60)
             self.assertFalse(marker.exists(), "the hook imported aec from the checkout")
 
     def test_python_starts_only_outside_the_checkout(self):
@@ -57,7 +58,7 @@ class HookSafePathTests(unittest.TestCase):
             env.pop("RELAYKIT_RECORDS", None)
             env.update({k: v.replace("{outside}", outside) for k, v in extra_env.items()})
             launcher = "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; " + HOOK_COMMAND.split("aec code-impact --help")[0]
-            done = subprocess.run(["bash", "-c", launcher + "aec probe"], env=env,
+            done = subprocess.run([BASH, "-c", launcher + "aec probe"], env=env,
                                   capture_output=True, text=True, timeout=60)
             self.assertEqual(done.returncode, 0, done.stderr)
             return json.loads(done.stdout), outside
@@ -82,7 +83,74 @@ class HookSafePathTests(unittest.TestCase):
             self.assertFalse(marker.exists(), "the hook imported aec from the checkout via PYTHONPATH")
             self.assertTrue(seen["file"].startswith(outside), seen)
             self.assertEqual(seen["pythonpath"], outside, "only entries outside the checkout survive")
-            self.assertEqual(seen["cwd"], "/")
+            self.assertEqual(os.path.normpath(seen["cwd"]), bash_native("/"))  # Git Bash: / is its install dir
+
+    def test_relative_pythonpath_resolves_from_the_project(self):
+        # Codex on Fathom#49 / MtG#46 (hook e019ae40): a relative entry meant the project, where the hook
+        # used to run; after `cd /` a sibling checkout `../Telosmith/src` was read from / and stopped importing.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp).resolve()
+            project, sibling = root / "proj", root / "Telosmith" / "src"
+            project.mkdir()
+            marker = project / "shadow-ran"
+            shadow = f"open({json.dumps(str(marker))}, 'w').write('ran')\n"
+            for sub in (project, project / "src"):
+                (sub / "aec").mkdir(parents=True)
+                (sub / "aec" / "__init__.py").write_text(shadow)
+                (sub / "aec" / "__main__.py").write_text(shadow)
+            (sibling / "aec").mkdir(parents=True)
+            (sibling / "aec" / "__init__.py").write_text("")
+            (sibling / "aec" / "__main__.py").write_text(
+                "import json, os, aec\nprint(json.dumps({'file': aec.__file__,"
+                " 'pythonpath': os.environ.get('PYTHONPATH')}))\n")
+            pp = os.pathsep.join([".", "src", "../Telosmith/src", "./src/../../proj"])
+            env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project), PYTHONPATH=pp)
+            env.pop("RELAYKIT_RECORDS", None)
+            launcher = "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; " + HOOK_COMMAND.split("aec code-impact --help")[0]
+            done = subprocess.run([BASH, "-c", launcher + "aec probe"], env=env,
+                                  capture_output=True, text=True, timeout=60)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            seen = json.loads(done.stdout)
+            self.assertFalse(marker.exists(), "a relative entry into the checkout survived")
+            self.assertTrue(seen["file"].startswith(str(sibling)), seen)
+            self.assertEqual(seen["pythonpath"], str(sibling), "relative entries become absolute; inside ones drop")
+
+    def _filtered(self, project, pp):
+        """PYTHONPATH as the launcher would hand it to aec (stops just before aec runs)."""
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project), PYTHONPATH=pp)
+        sh = "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; " + HOOK_COMMAND.split("aec code-impact --help")[0]
+        probe = sh.replace("python3 -m aec \"$@\"", "echo \"${PYTHONPATH-<unset>}\"")
+        done = subprocess.run([BASH, "-c", probe + "aec"], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.strip()
+
+    def test_ancestor_of_the_checkout_is_dropped(self):
+        # Copilot on #87: with the checkout at <root>/aec, an entry for <root> makes the checkout itself
+        # importable as `aec`, so `python3 -m aec` would run the branch's aec/__main__.py.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp).resolve()
+            project = root / "aec"
+            project.mkdir()
+            marker = root / "shadow-ran"
+            shadow = f"open({json.dumps(str(marker))}, 'w').write('ran')\n"
+            (project / "__init__.py").write_text(shadow)
+            (project / "__main__.py").write_text(shadow)
+            (root / "sibling").mkdir()
+            pp = os.pathsep.join(["..", str(root), "/", "../sibling", "{outside}"])
+            seen, outside = self._probe(project, {"PYTHONPATH": pp})
+            self.assertFalse(marker.exists(), "the checkout was imported as aec through an ancestor entry")
+            self.assertEqual(seen["pythonpath"], os.pathsep.join([str(root / "sibling"), outside]))
+            self.assertTrue(seen["file"].startswith(outside), seen)
+
+    def test_resolved_entry_with_a_path_separator_is_dropped(self):
+        # Copilot on #87: a branch-planted symlink src -> "/nonexistent:<checkout>/payload" resolves to one
+        # string that passes the inside-checkout test, then Python splits it and imports from the checkout.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = pathlib.Path(tmp).resolve()
+            (project / "payload").mkdir()
+            (project / "src").symlink_to(f"/nonexistent{os.pathsep}{project}/payload")
+            self.assertEqual(self._filtered(project, "src"), "<unset>")
+            self.assertEqual(self._filtered(project, os.pathsep.join(["src", "/abs/kept"])), "/abs/kept")
 
     def test_pythonpath_unset_or_all_inside_leaves_it_unset(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -95,7 +163,7 @@ class HookSafePathTests(unittest.TestCase):
                     env["PYTHONPATH"] = pp
                 # stop just before aec runs and report what it would get
                 probe = sh.replace("python3 -m aec \"$@\"", "echo \"${PYTHONPATH-<unset>}\"")
-                done = subprocess.run(["bash", "-c", probe + "aec"], env=env, capture_output=True,
+                done = subprocess.run([BASH, "-c", probe + "aec"], env=env, capture_output=True,
                                       text=True, timeout=60)
                 self.assertEqual(done.stdout.strip(), "<unset>", (pp, done.stderr))
 
@@ -106,7 +174,7 @@ class HookSafePathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = pathlib.Path(tmp).resolve()
             for value, expected in (("records", f"{project}/records"), ("  ../recs", f"{project}/../recs"),
-                                    ("/abs/records", "/abs/records"), ("", "")):
+                                    ("/abs/records", bash_native("/abs/records", "-m")), ("", "")):
                 seen, _ = self._probe(project, {"PYTHONPATH": "{outside}", "RELAYKIT_RECORDS": value})
                 self.assertEqual(seen["records"], expected, value)
             seen, _ = self._probe(project, {"PYTHONPATH": "{outside}"})
@@ -121,7 +189,7 @@ class HookSafePathTests(unittest.TestCase):
             env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project), PYTHONPATH=src, RELAYKIT_RECORDS="records")
             sh = "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; " + HOOK_COMMAND.split("aec code-impact --help")[0]
             probe = sh.replace("python3 -m aec \"$@\"", "python3 -c 'import os; print(os.environ[\"RELAYKIT_RECORDS\"]); print(os.path.isdir(os.environ[\"RELAYKIT_RECORDS\"]))'")
-            done = subprocess.run(["bash", "-c", probe + "aec"], env=env, capture_output=True, text=True, timeout=60)
+            done = subprocess.run([BASH, "-c", probe + "aec"], env=env, capture_output=True, text=True, timeout=60)
             self.assertEqual(done.stdout.split(), [f"{project}/records", "True"], done.stderr)
 
     def test_hook_still_finds_the_installed_aec(self):
@@ -129,7 +197,7 @@ class HookSafePathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ, CLAUDE_PROJECT_DIR=tmp, PYTHONPATH=src)
             launcher = HOOK_COMMAND.split("aec code-impact --help")[0]
-            done = subprocess.run(["bash", "-c", launcher + "aec --version"], env=env,
+            done = subprocess.run([BASH, "-c", launcher + "aec --version"], env=env,
                                   capture_output=True, text=True, timeout=60)
             self.assertEqual(done.returncode, 0, done.stderr)
 

@@ -1,29 +1,49 @@
 name: ci
 on: [push, pull_request]
+permissions:
+  contents: read  # checkout and upload-artifact need nothing more (CodeQL on #111)
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Platforms (HO-AEC-20261123-ER2R, DEC-270 (7)): every Python on Linux; one Python
+    # on macOS and on Windows, so platform claims are checked by CI, not asserted.
+    # What Windows doesn't run is a named skip, listed in each job's summary.
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - { os: macos-latest, python-version: "3.12" }
+          - { os: windows-latest, python-version: "3.12" }
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python-version }}" }
       - name: Spec Kit CLI (pinned) for extension install tests
-        run: pip install uv && uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.3 && echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - run: PYTHONPATH=src python3 -m unittest discover -s tests -v
+        run: pip install uv && uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.3 && uv tool dir --bin >> "$GITHUB_PATH"
+      - name: Unit tests (skips, with their reasons, go to the job summary)
+        run: |
+          PYTHONPATH=src python -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          { echo "## Skipped tests on ${{ matrix.os }}, Python ${{ matrix.python-version }}"
+            # A test with a docstring prints its id on one line and "docstring ... skipped" on the next.
+            awk '/\.\.\. skipped/ { print "- " ($0 ~ /^[A-Za-z_][A-Za-z0-9_]* \(/ ? $0 : prev " " $0); n++ }
+                 { prev = $0 } END { if (!n) print "- none" }' "$RUNNER_TEMP/tests.log"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Record touch (a src/ change appends a record or says why not)
         if: github.event_name == 'pull_request'
-        run: python3 tools/record_touch.py --base origin/${{ github.base_ref }}
+        run: python tools/record_touch.py --base origin/${{ github.base_ref }}
       - name: Edge snapshot of this repo (bedrock)
-        run: PYTHONPATH=src python3 -m aec edges . -o .aec/edges.jsonl
+        run: PYTHONPATH=src python -m aec edges . -o .aec/edges.jsonl
       - name: Records check against the snapshot (fails on dangling code references)
-        run: PYTHONPATH=src python3 -m aec check .aec/records.jsonl --edges .aec/edges.jsonl
+        run: PYTHONPATH=src python -m aec check .aec/records.jsonl --edges .aec/edges.jsonl
       - name: Code impact against the PR base (report-only; see the job summary)
-        if: github.event_name == 'pull_request' && matrix.python-version == '3.12'
+        if: github.event_name == 'pull_request' && matrix.python-version == '3.12' && runner.os == 'Linux'
         env:
           PYTHONPATH: src
           AEC_BASE: ${{ github.event.pull_request.base.sha }}
@@ -40,19 +60,28 @@ jobs:
             printf '%s\n' "$report"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit 0
       - name: WP1A structural diff (artifact, no comments)
-        if: github.event_name == 'pull_request' && matrix.python-version == '3.12'
+        if: github.event_name == 'pull_request' && matrix.python-version == '3.12' && runner.os == 'Linux'
         env:
           AEC_PR_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: PYTHONPATH=src python3 -m aec diff --base origin/main --head "$AEC_PR_HEAD" --json > "$RUNNER_TEMP/aec-diff.json"
+        run: PYTHONPATH=src python -m aec diff --base origin/main --head "$AEC_PR_HEAD" --json > "$RUNNER_TEMP/aec-diff.json"
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'pull_request' && matrix.python-version == '3.12'
+        if: github.event_name == 'pull_request' && matrix.python-version == '3.12' && runner.os == 'Linux'
         with:
           name: aec-structural-diff
           path: ${{ runner.temp }}/aec-diff.json
-      - run: PYTHONPATH=src python3 -m aec check examples/mtg-pilot/records.jsonl
+      - run: PYTHONPATH=src python -m aec check examples/mtg-pilot/records.jsonl
       - name: Adoption path on the fixture repo (init + import-purpose + check)
         run: |
           cp -r tests/fixtures/purpose_repo "$RUNNER_TEMP/repo"
-          PYTHONPATH=src python3 -m aec init "$RUNNER_TEMP/repo" --owner ci
-          PYTHONPATH=src python3 -m aec import-purpose "$RUNNER_TEMP/repo"
-          PYTHONPATH=src python3 -m aec check "$RUNNER_TEMP/repo/.aec/records.jsonl" --edges "$RUNNER_TEMP/repo/.aec/edges.jsonl"
+          PYTHONPATH=src python -m aec init "$RUNNER_TEMP/repo" --owner ci
+          PYTHONPATH=src python -m aec import-purpose "$RUNNER_TEMP/repo"
+          PYTHONPATH=src python -m aec check "$RUNNER_TEMP/repo/.aec/records.jsonl" --edges "$RUNNER_TEMP/repo/.aec/edges.jsonl"
+      - name: Demo (examples/without-spec-kit/run.sh)
+        if: runner.os != 'Windows'
+        run: |
+          PYTHONPATH="$PWD/src" bash examples/without-spec-kit/run.sh | tee "$RUNNER_TEMP/demo.log"
+          tail -1 "$RUNNER_TEMP/demo.log" | grep -qx "exit 1 (edited in place)"
+      - name: Demo skipped on Windows (named skip)
+        if: runner.os == 'Windows'
+        run: |
+          echo "SKIPPED on Windows: the demo examples/without-spec-kit/run.sh is a bash script that needs POSIX tools (mktemp, sed -i, git hooks run by bash); not supported on Windows." | tee -a "$GITHUB_STEP_SUMMARY"

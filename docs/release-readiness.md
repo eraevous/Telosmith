@@ -18,10 +18,10 @@ release can pass one and fail another, so each gets its own checks.
 | **Proud of the result** | Does it do something measurably useful, for someone besides us? | Only self-referential evidence (AEC checking AEC); a demo that was tuned until it passed |
 | **Proud over time** | Will this version still make sense in six months? | No tag, no changelog, no statement of what is stable and what is experimental |
 | **Proud of how it was made** | Would we be comfortable if people saw the process? | Approvals no one can trace; an AI-written project that hides that it is AI-written |
-| **Proud to entrust** (added from Kate's review) | Could someone run this on work they care about without an unpleasant surprise? | Writing outside the paths it declares; a generated CI job that installs whatever `main` is today; a failed analysis that looks like a clean one |
+| **Proud to entrust** (added from the review by ChatGPT (Kate)) | Could someone run this on work they care about without an unpleasant surprise? | Writing outside the paths it declares; a generated CI job that installs whatever `main` is today; a failed analysis that looks like a clean one |
 
 Two of these pull against each other. "Proud to show" wants a confident front page; "proud
-to stand behind" (and Constitution IV) wants every claim hedged to what is measured. The
+to stand behind" (and Constitution IV of the governance charter) wants every claim hedged to what is measured. The
 resolution is to be confident about what AEC *does* (deterministic, inspectable, specific)
 and exact about what it has *shown*. A null or mixed result reported plainly passes
 "proud of the result" better than a strong result nobody can reproduce. So the release requires
@@ -35,7 +35,7 @@ Status as of 2026-11-01. ✅ done · 🔧 in this release branch · ⏳ needs wo
 ### Proud to show
 - 🔧 README opens with the problem and the one question AEC answers, then a quickstart.
 - 🔧 Quickstart works on a repository that is not AEC: `pip install`, `aec init`, `aec edges`, `aec check`.
-- 🔧 Governance detail (authority records, constitution) moves below the fold, linked, not deleted.
+- 🔧 Governance detail (authority records, governance charter) moves below the fold, linked, not deleted.
 - ✅ Example with real data (`examples/mtg-pilot/`).
 - 🔧 The worked example is reproducible by script, against a pinned commit (`examples/itsdangerous-demo/run.sh`).
 - ✅ One independent clean-install walkthrough: a fresh agent, following only the README, with every failure recorded (`docs/evaluations/walkthrough-001.md`). It is an agent, not a stranger; a human walkthrough is better when one is available.
@@ -60,7 +60,7 @@ Status as of 2026-11-01. ✅ done · 🔧 in this release branch · ⏳ needs wo
 - 👤 Three to five `good first issue` items opened on GitHub (drafts in this branch's PR description).
 
 ### Proud of the result
-- ✅ One honestly reported test of incremental value on code AEC wasn't built for: the WP2-probe pilot, pre-registered in `docs/evaluations/probe-001.md` before any run. It is Zach's own repository with tasks built for the test, so it is better than self-testing but not independent evidence, and it is labelled that way.
+- ✅ One honestly reported test of incremental value on code AEC wasn't built for: the WP2-probe pilot (an eval), pre-registered in `docs/evaluations/probe-001.md` before any run. It is Zach's own repository with tasks built for the test, so it is better than self-testing but not independent evidence, and it is labelled that way.
 - ✅ The result, whatever it is, reported in README in one sentence with a link. ([probe-001 results](evaluations/probe-001-results.md): no signal, plus a cost.) A null result does not block the release; it blocks any claim of improvement.
 
 ### Proud over time
