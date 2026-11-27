@@ -73,8 +73,12 @@ validated by `aec manifest validate`, which the build runs on its own result bef
   A list whose capability isn't advertised is `[]`, with no policy entry.
 - **Pagination.** Each list follows `nextCursor` until a result has none. Pages are joined in order.
 - **Limits.** 10 seconds per request, as one deadline: notifications the server sends meanwhile don't extend it. 100 pages per list.
-  stdout is read as bytes: at most 8 MiB in one line and 64 MiB in the session. stderr is read in chunks and
-  discarded as it arrives, so it never accumulates.
+  The deadline is checked before each message is taken, so notifications already queued can't outlast it.
+  stdout is read as bytes: at most 8 MiB in one line and 64 MiB in the session. The session's output is everything
+  the server writes until it exits: after the last answer, stdin is closed, the server is given 10 seconds to exit
+  (then killed), stdout is read to its end, and an overrun anywhere in it fails the collection. Past a cap, stdout
+  is still drained (and dropped) so the server can't block on a full pipe. stderr is read in chunks and discarded
+  as it arrives, so it never accumulates.
 - **Failures.** Exit 2 and nothing is written for any of these:
   - a cursor that isn't a non-empty string, or one already seen;
   - more than 100 pages;

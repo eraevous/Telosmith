@@ -113,7 +113,9 @@ class _Session:
         except (OSError, ValueError) as exc:
             raise CollectError(f"could not start manifest.command ({type(exc).__name__})") from None
         self.lines: queue.Queue = queue.Queue()
-        threading.Thread(target=self._read, daemon=True).start()
+        self.overrun = None  # set by the reader past a byte cap; checked again before a collection succeeds
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
         threading.Thread(target=self._drain, daemon=True).start()
         self.next_id = 0
 
@@ -134,12 +136,12 @@ class _Session:
                 if not line:
                     break
                 total += len(line)
-                if len(line) > MAX_LINE:
-                    self.lines.put(_TOO_LONG)
-                    return
-                if total > MAX_STDOUT:
-                    self.lines.put(_TOO_MUCH)
-                    return
+                if len(line) > MAX_LINE or total > MAX_STDOUT:
+                    self.overrun = _TOO_LONG if len(line) > MAX_LINE else _TOO_MUCH
+                    self.lines.put(self.overrun)
+                    while self.proc.stdout.read(65536):  # keep draining, unkept, so the server can't block on a full pipe
+                        pass
+                    break
                 self.lines.put(line)
         except (OSError, ValueError):
             pass
@@ -157,16 +159,17 @@ class _Session:
             raise CollectError(f"{method}: the server closed its input") from None
         deadline = time.monotonic() + TIMEOUT_S  # one budget for the whole request, notifications included
         while True:
+            left = deadline - time.monotonic()
             try:
-                line = self.lines.get(timeout=max(0.0, deadline - time.monotonic()))
+                if left <= 0:  # checked before every message, so queued notifications can't outlast the deadline
+                    raise queue.Empty
+                line = self.lines.get(timeout=left)
             except queue.Empty:
                 raise CollectError(f"{method}: no answer within {TIMEOUT_S:g} s") from None
             if line is None:
                 raise CollectError(f"{method}: the server exited before answering")
-            if line is _TOO_LONG:
-                raise CollectError(f"{method}: the server wrote a line longer than {MAX_LINE} bytes")
-            if line is _TOO_MUCH:
-                raise CollectError(f"{method}: the server wrote more than {MAX_STDOUT} bytes in this session")
+            if line is _TOO_LONG or line is _TOO_MUCH:
+                self.raise_overrun(method)
             try:
                 reply = json.loads(line.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -181,6 +184,20 @@ class _Session:
             raise CollectError(f"{method}: the result isn't an object with resultType 'complete'")
         return result
 
+    def raise_overrun(self, where: str):
+        if self.overrun is _TOO_LONG:
+            raise CollectError(f"{where}: the server wrote a line longer than {MAX_LINE} bytes")
+        raise CollectError(f"{where}: the server wrote more than {MAX_STDOUT} bytes in this session")
+
+    def finish(self):
+        """End a session whose answers all arrived: close stdin, let the server exit (killed after TIMEOUT_S), read
+        stdout to its end, then fail if it overran a cap. Session output is everything up to the server's exit, so
+        an overrun after the last answer counts, deterministically (Kate, round 14)."""
+        self.close()
+        self.reader.join(TIMEOUT_S)
+        if self.overrun is not None:
+            self.raise_overrun("session")
+
     def close(self, failed: bool = False):
         """Close stdin and wait; after a failure, or if the server doesn't exit in time, kill it."""
         with contextlib.suppress(OSError):
@@ -191,6 +208,9 @@ class _Session:
         if self.proc.poll() is None:
             self.proc.kill()
             self.proc.wait()
+
+    def release(self):
+        """Close the output pipes (collect's finally, after finish() has joined the reader on success)."""
         for f in (self.proc.stdout, self.proc.stderr):  # the reader threads see EOF or ValueError and stop
             with contextlib.suppress(OSError, ValueError):
                 f.close()
@@ -256,10 +276,13 @@ def collect(root: Path, sec: dict) -> dict:
                 out[lst], pol = _collect_list(s, method, key)
                 if pol:
                     out["listPolicy"][lst] = pol
+        s.finish()  # an overrun after the last answer still fails (Kate, round 14)
         failed = False
         return out
     finally:
-        s.close(failed)
+        if failed:
+            s.close(failed=True)
+        s.release()
 
 
 def _inside(root: Path, path: Path) -> bool:

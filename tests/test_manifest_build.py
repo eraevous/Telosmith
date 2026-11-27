@@ -28,6 +28,10 @@ META = "io.modelcontextprotocol/protocolVersion"
 sys.stderr.write("leak: " + os.environ.get("SECRET_FOR_TEST", "absent") + "\n"); sys.stderr.flush()
 if spec.get("dump_env"):
     json.dump(dict(os.environ), open("env_seen.json", "w"))
+def out(text):  # every stdout line goes through here, so a test can measure them
+    if spec.get("log_lengths"):
+        open("lengths.txt", "a").write(str(len((text + "\n").encode("utf-8"))) + "\n")
+    print(text); sys.stdout.flush()
 for line in sys.stdin:
     msg = json.loads(line)
     m, p = msg["method"], msg.get("params", {})
@@ -67,7 +71,12 @@ for line in sys.stdin:
             r["nextCursor"] = spec.get("cursor_value", str(i + 1))
     r["resultType"] = "incomplete" if spec.get("not_complete") == m else "complete"
     r["_meta"] = {"io.modelcontextprotocol/serverInfo": {"name": "fake", "version": spec.get("version", "1.2.3")}}
-    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r})); sys.stdout.flush()
+    out(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r}))
+    if spec.get("trailing_flood") == m:  # answer first, then overrun
+        for _ in range(spec["n"]):
+            print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {}}))
+        sys.stdout.flush()
+        time.sleep(1)
 '''
 
 TOOL = {"name": "t1", "description": "first", "inputSchema": {"type": "object"}}
@@ -230,6 +239,19 @@ class CollectionFailures(Base):
     def test_notifications_do_not_extend_the_deadline(self):
         self.assert_fails_without_writing(timeout=1.0, lists={}, notify="tools/list")
 
+    def test_expired_deadline_stops_consuming_queued_messages(self):
+        # past the deadline, already-queued notifications aren't read one by one (Kate, round 14)
+        s = object.__new__(manifest_build._Session)
+        s.proc, s.next_id, s.overrun = mock.Mock(), 0, None
+        s.lines = manifest_build.queue.Queue()
+        for _ in range(5):
+            s.lines.put(b'{"jsonrpc": "2.0", "method": "notifications/progress", "params": {}}\n')
+        clock = iter([0.0, 0.0, 1.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0])
+        with mock.patch.object(manifest_build.time, "monotonic", lambda: next(clock)):
+            with self.assertRaises(manifest_build.CollectError):
+                s.request("tools/list")
+        self.assertEqual(s.lines.qsize(), 3)  # two read before the deadline passed, three left
+
     def test_result_that_is_not_complete(self):
         self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]}, not_complete="tools/list")
 
@@ -253,10 +275,24 @@ class CollectionFailures(Base):
             err = self.assert_fails_without_writing(lists={}, long_line="tools/list", n=5000)
         self.assertIn("longer than 1000 bytes", err)
 
-    def test_line_at_the_byte_cap_passes(self):  # decoy: a reply line just under the cap is fine
-        self.fake(lists={"tools/list": [{"items": [TOOL]}]})
-        with mock.patch.object(manifest_build, "MAX_LINE", 4000):
+    def test_byte_cap_boundary_is_measured(self):
+        # the longest reply line, measured as written: exactly the cap passes, one byte under it fails (Kate, round 14)
+        self.fake(lists={"tools/list": [{"items": [TOOL]}]}, log_lengths=True)
+        self.assertEqual(self.cmd("build")[0], 0)
+        longest = max(int(x) for x in (self.tmp / "lengths.txt").read_text().split())
+        with mock.patch.object(manifest_build, "MAX_LINE", longest):
             self.assertEqual(self.cmd("build")[0], 0)
+        with mock.patch.object(manifest_build, "MAX_LINE", longest - 1):
+            code, _, err = self.cmd("build")
+        self.assertEqual(code, 2, err)
+        self.assertIn(f"longer than {longest - 1} bytes", err)
+
+    def test_overrun_after_the_last_answer_still_fails(self):
+        # the last list answers, then floods: the sentinel must not be left unread (Kate, round 14)
+        with mock.patch.object(manifest_build, "MAX_STDOUT", 20000):
+            err = self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]},
+                                                    trailing_flood="tools/list", n=2000)
+        self.assertIn("more than 20000 bytes", err)
 
     def test_session_over_the_stdout_cap(self):
         with mock.patch.object(manifest_build, "MAX_STDOUT", 20000):
@@ -367,10 +403,19 @@ class Check(Base):
         self.fake(lists={"tools/list": [{"items": [TOOL2], "policy": POLICY}]})
         same(1)
         self.path.write_text("{not json", encoding="utf-8")
-        same(1)
+        same(1)  # unparsable
+        self.path.unlink()
+        self.path.mkdir()  # unreadable: a directory where the file should be
+        code = self.cmd("check")[0]
+        self.assertEqual((code, self.path.is_dir(), list(self.path.iterdir())), (1, True, []))
+        self.path.rmdir()
+        self.fake(lists={"tools/list": [{"items": [TOOL], "policy": POLICY}]})
+        self.assertEqual(self.cmd("build")[0], 0)  # a valid committed file again, so the next case reaches refusal
         self.fake(lists={"tools/list": [{"items": [{"name": "t", "description": "API_TOKEN=hunter2-value",
                                                      "inputSchema": {"type": "object"}}]}]})
-        same(1)
+        code, _, err = self.cmd("check")
+        self.assertEqual(code, 1)
+        self.assertIn("the built manifest is invalid", err)  # the disclosure refusal, not a read error
         before = self.path.read_bytes()
         self.assertEqual(run(["manifest", "check", "--root", str(self.tmp)])[0], 2)
         self.assertEqual(self.path.read_bytes(), before)
@@ -450,7 +495,7 @@ class Safety(Base):
         self.assertIn("manifest.authority", err)
 
     def test_a2a_fields_that_come_from_elsewhere_are_refused(self):
-        for k in manifest_build.A2A_FROM_ELSEWHERE:
+        for k in ("name", "description", "version", "authority"):  # a literal set, not the module's constant
             self.config(a2a={"url": "https://example.test/a2a", k: "x"})
             code, _, err = self.cmd("build")
             self.assertEqual(code, 2, k)
