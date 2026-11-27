@@ -11,6 +11,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -32,6 +33,9 @@ def out(text):  # every stdout line goes through here, so a test can measure the
     if spec.get("log_lengths"):
         open("lengths.txt", "a").write(str(len((text + "\n").encode("utf-8"))) + "\n")
     print(text); sys.stdout.flush()
+if spec.get("descendant"):  # a child that inherits stdout and stderr and outlives the server
+    import subprocess
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
 for line in sys.stdin:
     msg = json.loads(line)
     m, p = msg["method"], msg.get("params", {})
@@ -57,6 +61,10 @@ for line in sys.stdin:
     if spec.get("error") == m:
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32603, "message": "boom SECRET"}}))
         sys.stdout.flush(); continue
+    if spec.get("big_cursor") == m and not p.get("cursor"):  # a huge cursor, then stop reading stdin
+        out(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"tools": [], "nextCursor": "c" * 1000000,
+                        "resultType": "complete"}}))
+        time.sleep(60)
     if m == "server/discover":
         r = {"supportedVersions": spec.get("versions", ["2026-07-28"]), "capabilities": spec.get("caps", {"tools": {}})}
     else:
@@ -72,6 +80,8 @@ for line in sys.stdin:
     r["resultType"] = "incomplete" if spec.get("not_complete") == m else "complete"
     r["_meta"] = {"io.modelcontextprotocol/serverInfo": {"name": "fake", "version": spec.get("version", "1.2.3")}}
     out(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r}))
+    if spec.get("trailing_bytes") == m:  # answer first, then a bad line
+        sys.stdout.buffer.write(spec["bytes"].encode("latin-1")); sys.stdout.flush()
     if spec.get("trailing_flood") == m:  # answer first, then overrun
         for _ in range(spec["n"]):
             print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {}}))
@@ -246,7 +256,7 @@ class CollectionFailures(Base):
         s.lines = manifest_build.queue.Queue()
         for _ in range(5):
             s.lines.put(b'{"jsonrpc": "2.0", "method": "notifications/progress", "params": {}}\n')
-        clock = iter([0.0, 0.0, 1.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0])
+        clock = iter([0.0, 0.0, 0.0, 1.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0])
         with mock.patch.object(manifest_build.time, "monotonic", lambda: next(clock)):
             with self.assertRaises(manifest_build.CollectError):
                 s.request("tools/list")
@@ -286,6 +296,32 @@ class CollectionFailures(Base):
             code, _, err = self.cmd("build")
         self.assertEqual(code, 2, err)
         self.assertIn(f"longer than {longest - 1} bytes", err)
+
+    def test_server_that_stops_reading_stdin_times_out(self):
+        # a 1 MB cursor, then the server stops reading: the next request's write must not block (Codex on 25f2727)
+        start = time.monotonic()
+        self.assert_fails_without_writing(timeout=1.0, lists={}, big_cursor="tools/list")
+        self.assertLess(time.monotonic() - start, 20)
+
+    def test_descendant_holding_the_pipes_does_not_hang_a_failure(self):
+        start = time.monotonic()
+        self.assert_fails_without_writing(timeout=1.0, lists={}, hang="tools/list", descendant=True)
+        self.assertLess(time.monotonic() - start, 20)
+
+    def test_descendant_holding_the_pipes_after_success(self):  # decoy: a clean session with a descendant passes
+        if os.name != "posix":
+            self.skipTest("process groups are POSIX")
+        self.fake(lists={"tools/list": [{"items": [TOOL]}]}, descendant=True)
+        start = time.monotonic()
+        code, _, err = self.cmd("build")
+        self.assertEqual(code, 0, err)
+        self.assertLess(time.monotonic() - start, 8)
+
+    def test_bad_line_after_the_last_answer_fails(self):
+        for bad in ("\xff\n", "not json\n"):
+            self.fake(lists={"tools/list": [{"items": [TOOL], "policy": POLICY}]})
+            self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]}, trailing_bytes="tools/list",
+                                              bytes=bad)
 
     def test_overrun_after_the_last_answer_still_fails(self):
         # the last list answers, then floods: the sentinel must not be left unread (Kate, round 14)
@@ -413,8 +449,9 @@ class Check(Base):
         self.assertEqual(self.cmd("build")[0], 0)  # a valid committed file again, so the next case reaches refusal
         self.fake(lists={"tools/list": [{"items": [{"name": "t", "description": "API_TOKEN=hunter2-value",
                                                      "inputSchema": {"type": "object"}}]}]})
+        before = self.path.read_bytes()  # snapshot before the refusal (Kate, round 15)
         code, _, err = self.cmd("check")
-        self.assertEqual(code, 1)
+        self.assertEqual((code, self.path.read_bytes()), (1, before))
         self.assertIn("the built manifest is invalid", err)  # the disclosure refusal, not a read error
         before = self.path.read_bytes()
         self.assertEqual(run(["manifest", "check", "--root", str(self.tmp)])[0], 2)
@@ -490,16 +527,38 @@ class Safety(Base):
 
     def test_unknown_authority_key_is_refused(self):
         self.config(authority={"needs": [], "accepts": [], "grants": [], "extra": []})
-        code, _, err = self.cmd("build")
-        self.assertEqual(code, 2)
-        self.assertIn("manifest.authority", err)
+        for which in ("build", "check"):
+            code, _, err = self.cmd(which)
+            self.assertEqual(code, 2, which)
+            self.assertIn("manifest.authority", err)
 
     def test_a2a_fields_that_come_from_elsewhere_are_refused(self):
-        for k in ("name", "description", "version", "authority"):  # a literal set, not the module's constant
-            self.config(a2a={"url": "https://example.test/a2a", k: "x"})
-            code, _, err = self.cmd("build")
-            self.assertEqual(code, 2, k)
-            self.assertIn("manifest.a2a", err)
+        # AEC-R-manifest-config-provenance@1 (Kate): build and check, before collection, bytes kept
+        self.assertEqual(self.cmd("build")[0], 0)
+        path = self.tmp / ".aec" / "manifest.json"
+        before = path.read_bytes()
+        self.fake(lists={"tools/list": [{"items": [TOOL]}]}, dump_env=True)  # env_seen.json would show a launch
+        bad = [{k: "x"} for k in ("name", "description", "version", "authority")]  # a literal set, not the constant
+        bad.append({"no_such_card_argument": True})
+        for extra in bad:
+            self.config(a2a={"url": "https://example.test/a2a", **extra})
+            for which in ("build", "check"):
+                code, _, err = self.cmd(which)
+                self.assertEqual(code, 2, (extra, which))
+                self.assertIn("manifest.a2a", err)
+                self.assertFalse((self.tmp / "env_seen.json").exists(), extra)  # refused before anything starts
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_reserved_card_fields_come_from_their_sources(self):
+        self.config(a2a={"url": "https://example.test/a2a"},
+                    authority={"needs": ["x.read"], "accepts": [], "grants": []})
+        self.assertEqual(self.cmd("build")[0], 0)
+        m = self.written()
+        card = m["sockets"]["a2a"]["agentCard"]
+        self.assertEqual((card["name"], card["description"], card["version"]), ("Fake", "A fake tool.", "1.2.3"))
+        ext = card["capabilities"]["extensions"]
+        self.assertEqual(len(ext), 1)
+        self.assertEqual(ext[0]["params"]["needs"], ["x.read"])
 
     def test_write_failure_reports_the_type_and_keeps_the_old_file(self):
         self.assertEqual(self.cmd("build")[0], 0)

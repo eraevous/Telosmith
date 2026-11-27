@@ -32,6 +32,7 @@ and host-path shapes it recognises). That catches recognisable shapes only.
 from __future__ import annotations
 
 import contextlib
+import inspect
 import json
 import os
 import queue
@@ -96,6 +97,9 @@ def section_problems(sec) -> list[str]:
     elif isinstance(a, dict) and set(a) & set(A2A_FROM_ELSEWHERE):
         p.append("manifest.a2a: name, description, version and authority come from manifest.tool, the server and "
                  "manifest.authority; don't set them here")
+    elif isinstance(a, dict) and set(a) - set(inspect.signature(a2a.build_card).parameters):
+        # before collection, like the rest (Kate, AEC-R-manifest-config-provenance@1)
+        p.append("manifest.a2a: an argument aec a2a card doesn't take")
     path = sec.get("path", ".aec/manifest.json")
     if not (manifest._str(path) and not manifest._host_path(path) and not manifest._climbs(path)):
         p.append("manifest.path: a relative path inside the repository")
@@ -108,15 +112,19 @@ class _Session:
     def __init__(self, root: Path, sec: dict):
         env = {k: os.environ[k] for k in (*BASE_ENV, *sec.get("pass_env", [])) if k in os.environ}
         try:
+            # its own process group on POSIX, so descendants holding our pipes are killed with it (Codex on #118);
+            # bufsize=0, so closing stdin never waits on a flush into a full pipe
             self.proc = subprocess.Popen(sec["command"], cwd=root, env=env, stdin=subprocess.PIPE,
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+                                         start_new_session=os.name == "posix")
         except (OSError, ValueError) as exc:
             raise CollectError(f"could not start manifest.command ({type(exc).__name__})") from None
         self.lines: queue.Queue = queue.Queue()
         self.overrun = None  # set by the reader past a byte cap; checked again before a collection succeeds
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
-        threading.Thread(target=self._drain, daemon=True).start()
+        self.drainer = threading.Thread(target=self._drain, daemon=True)
+        self.drainer.start()
         self.next_id = 0
 
     def _drain(self):
@@ -152,12 +160,21 @@ class _Session:
         params = dict(params or {})
         params["_meta"] = {mcp.META_VERSION: PROTOCOL}
         msg = {"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}
-        try:
-            self.proc.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
-            self.proc.stdin.flush()
-        except OSError:
-            raise CollectError(f"{method}: the server closed its input") from None
-        deadline = time.monotonic() + TIMEOUT_S  # one budget for the whole request, notifications included
+        deadline = time.monotonic() + TIMEOUT_S  # one budget for the whole request: the write, notifications too
+        data, failed = (json.dumps(msg) + "\n").encode("utf-8"), []
+
+        def write():
+            try:
+                self.proc.stdin.write(data)
+            except (OSError, ValueError):
+                failed.append(True)
+        w = threading.Thread(target=write, daemon=True)  # a server that stops reading can't block us (Codex on #118)
+        w.start()
+        w.join(max(0.0, deadline - time.monotonic()))
+        if w.is_alive():
+            raise CollectError(f"{method}: the server didn't read the request within {TIMEOUT_S:g} s")
+        if failed:
+            raise CollectError(f"{method}: the server closed its input")
         while True:
             left = deadline - time.monotonic()
             try:
@@ -195,25 +212,48 @@ class _Session:
         an overrun after the last answer counts, deterministically (Kate, round 14)."""
         self.close()
         self.reader.join(TIMEOUT_S)
+        if self.reader.is_alive():  # stdout not accounted for to its end: not a clean result (Kate, round 15)
+            raise CollectError(f"session: stdout didn't close within {TIMEOUT_S:g} s of the server exiting")
         if self.overrun is not None:
             self.raise_overrun("session")
+        while True:  # lines after the last answer get the same checks as any other (Codex on #118)
+            line = self.lines.get_nowait()
+            if line is None:
+                break
+            try:
+                json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise CollectError("session: the server wrote a line that isn't JSON after its last answer") from None
 
     def close(self, failed: bool = False):
-        """Close stdin and wait; after a failure, or if the server doesn't exit in time, kill it."""
+        """Close stdin and let the server exit (killed after TIMEOUT_S); after a failure, kill it first, so a write
+        still blocked on its stdin ends with a broken pipe."""
+        if failed:
+            self._kill()
         with contextlib.suppress(OSError):
             self.proc.stdin.close()
         if not failed:
             with contextlib.suppress(subprocess.TimeoutExpired):
                 self.proc.wait(timeout=TIMEOUT_S)
+        self._kill()
+
+    def _kill(self):
         if self.proc.poll() is None:
             self.proc.kill()
             self.proc.wait()
+        if os.name == "posix":  # and anything it started in its group, which may still hold stdout or stderr
+            with contextlib.suppress(OSError):
+                os.killpg(self.proc.pid, 9)
 
     def release(self):
-        """Close the output pipes (collect's finally, after finish() has joined the reader on success)."""
-        for f in (self.proc.stdout, self.proc.stderr):  # the reader threads see EOF or ValueError and stop
-            with contextlib.suppress(OSError, ValueError):
-                f.close()
+        """Close the output pipes whose reader has stopped. A reader still blocked (a descendant outside the group
+        holds the pipe) keeps its stream: closing it would wait on the reader's lock (Codex on #118). Both threads
+        are daemons, so neither holds the process open."""
+        for f, t in ((self.proc.stdout, self.reader), (self.proc.stderr, self.drainer)):
+            t.join(0.5)
+            if not t.is_alive():
+                with contextlib.suppress(OSError, ValueError):
+                    f.close()
 
 
 def _collect_list(s: _Session, method: str, key: str) -> tuple[list, dict]:

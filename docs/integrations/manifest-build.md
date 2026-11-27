@@ -34,7 +34,8 @@ that runs):
   `streaming`, `push_notifications`, `input_modes`, `output_modes`, `documentation_url` and `skills`. Name,
   description and version come from `tool` and the server, and the authority extension from `authority`; setting
   `name`, `description`, `version` or `authority` inside `a2a` is a config error rather than being dropped silently.
-  An argument `aec a2a card` doesn't take is a config error too.
+  An argument `aec a2a card` doesn't take is a config error too. These refusals happen before anything is launched
+  (Kate's `AEC-R-manifest-config-provenance@1`, proposed).
 - `authority` takes only `needs`, `accepts` and `grants`. Any other key is a config error: the manifest has no place
   for it, so it would otherwise vanish.
 - `pass_env` names environment variables the server needs. Names only; their values are never written or shown.
@@ -73,10 +74,15 @@ validated by `aec manifest validate`, which the build runs on its own result bef
   A list whose capability isn't advertised is `[]`, with no policy entry.
 - **Pagination.** Each list follows `nextCursor` until a result has none. Pages are joined in order.
 - **Limits.** 10 seconds per request, as one deadline: notifications the server sends meanwhile don't extend it. 100 pages per list.
-  The deadline is checked before each message is taken, so notifications already queued can't outlast it.
+  The deadline starts before the request is written and covers the write, so a server that stops reading its input
+  can't block the build. It is checked before each message is taken, so notifications already queued can't
+  outlast it.
   stdout is read as bytes: at most 8 MiB in one line and 64 MiB in the session. The session's output is everything
   the server writes until it exits: after the last answer, stdin is closed, the server is given 10 seconds to exit
-  (then killed), stdout is read to its end, and an overrun anywhere in it fails the collection. Past a cap, stdout
+  (then killed), stdout is read to its end, and an overrun anywhere in it fails the collection, as does a line after
+  the last answer that isn't UTF-8 JSON, or stdout still open 10 seconds after the server exits. On POSIX the server
+  runs in its own process group, which is killed at the end, so a descendant holding the pipes can't keep the build
+  waiting. A pipe is closed only once its reader has stopped. Past a cap, stdout
   is still drained (and dropped) so the server can't block on a full pipe. stderr is read in chunks and discarded
   as it arrives, so it never accumulates.
 - **Failures.** Exit 2 and nothing is written for any of these:
