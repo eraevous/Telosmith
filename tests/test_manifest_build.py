@@ -354,6 +354,25 @@ class Safety(Base):
         self.assertNotIn("value-that-must-not-be-shown", out + err)
         self.assertIn("[not shown]", err)
 
+    def test_symlinked_config_is_refused_before_launch(self):
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        marker = outside / "victim-marker"
+        cmd = [Path(sys.executable).name, "-c", f"open({str(marker)!r}, 'w')"]
+        (outside / "config.json").write_text(json.dumps({"version": 1, "manifest": dict(self.sec, command=cmd)}),
+                                             encoding="utf-8")
+        cfg = self.tmp / ".aec" / "config.json"
+        cfg.unlink()
+        try:
+            cfg.symlink_to(outside / "config.json")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        for which in ("build", "check"):
+            code, _, err = self.cmd(which)
+            self.assertEqual(code, 2, err)
+            self.assertIn("symlink", err)
+        self.assertFalse(marker.exists())
+
     def test_missing_section_is_a_config_error(self):
         (self.tmp / ".aec" / "config.json").write_text(json.dumps({"version": 1}), encoding="utf-8")
         code, _, err = self.cmd("build")

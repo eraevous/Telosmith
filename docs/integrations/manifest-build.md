@@ -114,6 +114,8 @@ validated by `aec manifest validate`, which the build runs on its own result bef
   both exit 2 before reading the config.
   - A pull request can change `.aec/config.json`, so passing the flag means the invoker trusts that checkout's config.
   - This is not a sandbox. The command runs with the invoker's rights.
+  - The config must be the repository's own file: a symlinked `.aec` or `.aec/config.json`, or one that resolves
+    outside ROOT, is refused before it is read.
 - **CI.** No workflow runs `check` yet. Wiring it in is a CI-policy decision for Zach.
   - A CI job on pull requests from forks would run the PR's own config.
 - **The child process gets:**

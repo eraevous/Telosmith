@@ -236,6 +236,12 @@ def _skill_entries(root: Path, paths) -> list[dict]:
 
 def build(root: Path) -> dict:
     """The manifest for ROOT from its own config and a fresh collection. Raises CollectError or ConfigError."""
+    # The trust is in this repository's config, so it must be this repository's file: a symlinked `.aec` or
+    # config.json (or one resolving outside ROOT) is refused before it is parsed (Codex security review on #118).
+    aec_dir, cfg_file = root / ".aec", root / config.CONFIG_PATH
+    if aec_dir.is_symlink() or cfg_file.is_symlink() or (cfg_file.exists() and not _inside(root, cfg_file)):
+        raise config.ConfigError(f"{config.CONFIG_PATH} or .aec is a symlink or resolves outside the repository; "
+                                 "refused before reading it")
     cfg = config.own(root)
     sec = cfg.get("manifest")
     p = section_problems(sec)
