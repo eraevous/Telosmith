@@ -33,13 +33,19 @@ for line in sys.stdin:
     m, p = msg["method"], msg.get("params", {})
     if spec.get("hang") == m:
         time.sleep(60)
+    if spec.get("notify") == m:  # chatter without ever answering
+        for _ in range(300):
+            print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {}})); sys.stdout.flush()
+            time.sleep(0.2)
+    if spec.get("garbage") == m:
+        print("this is not json"); sys.stdout.flush(); continue
     if spec.get("exit") == m:
         sys.exit(3)
     if spec.get("error") == m:
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32603, "message": "boom SECRET"}}))
         sys.stdout.flush(); continue
     if m == "server/discover":
-        r = {"supportedVersions": ["2026-07-28"], "capabilities": spec.get("caps", {"tools": {}})}
+        r = {"supportedVersions": spec.get("versions", ["2026-07-28"]), "capabilities": spec.get("caps", {"tools": {}})}
     else:
         pages = spec["lists"].get(m, [{"items": []}])
         i = int(p.get("cursor") or 0) if spec.get("cursor_kind") != "loop" else 0
@@ -50,7 +56,7 @@ for line in sys.stdin:
         r.update(page.get("policy", {}))
         if i + 1 < len(pages):
             r["nextCursor"] = spec.get("cursor_value", str(i + 1))
-    r["resultType"] = "complete"
+    r["resultType"] = "incomplete" if spec.get("not_complete") == m else "complete"
     r["_meta"] = {"io.modelcontextprotocol/serverInfo": {"name": "fake", "version": spec.get("version", "1.2.3")}}
     print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r})); sys.stdout.flush()
 '''
@@ -187,6 +193,37 @@ class CollectionFailures(Base):
         self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL], "policy": POLICY}, {"items": [TOOL2]}]})
 
 
+    def test_policy_types_are_checked_on_every_page(self):
+        # 0 == False == 0.0 in Python: the second page's value must fail on its own (Codex on cad2c3c)
+        for bad in (False, 0.0):
+            self.fake(lists={"tools/list": [{"items": [TOOL], "policy": POLICY}]})
+            self.assert_fails_without_writing(lists={"tools/list": [
+                {"items": [TOOL], "policy": POLICY}, {"items": [TOOL2], "policy": {"ttlMs": bad, "cacheScope": "public"}}]})
+
+    def test_notifications_do_not_extend_the_deadline(self):
+        self.assert_fails_without_writing(timeout=1.0, lists={}, notify="tools/list")
+
+    def test_result_that_is_not_complete(self):
+        self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]}, not_complete="tools/list")
+
+    def test_line_that_is_not_json(self):
+        self.assert_fails_without_writing(lists={}, garbage="tools/list")
+
+    def test_unsupported_protocol_version(self):
+        self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]}, versions=["2025-11-25"])
+
+    def test_more_pages_than_the_cap(self):
+        with mock.patch.object(manifest_build, "MAX_PAGES", 3):
+            self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}] * 4})
+
+    def test_exactly_the_page_cap_passes(self):  # decoy for the cap
+        self.fake(lists={"tools/list": [{"items": [TOOL]}] * 3})
+        with mock.patch.object(manifest_build, "MAX_PAGES", 3):
+            code, _, err = self.cmd("build")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.written()["sockets"]["mcp"]["tools"], [TOOL] * 3)
+
+
 class Check(Base):
     def setUp(self):
         super().setUp()
@@ -302,6 +339,20 @@ class Safety(Base):
         self.config(path="out/manifest.json")
         self.assertEqual(self.cmd("build")[0], 2)
         self.assertFalse((outside / "manifest.json").exists())
+
+    def test_non_list_skills_is_a_config_error_not_a_crash(self):
+        for bad in (None, 3):
+            self.config(skills=bad)
+            code, _, err = self.cmd("build")
+            self.assertEqual(code, 2, err)
+            self.assertIn("manifest.skills", err)
+
+    def test_config_errors_follow_the_plain_text_rule(self):
+        self.config(**{"private=value-that-must-not-be-shown": 1})
+        code, out, err = self.cmd("build")
+        self.assertEqual(code, 2)
+        self.assertNotIn("value-that-must-not-be-shown", out + err)
+        self.assertIn("[not shown]", err)
 
     def test_missing_section_is_a_config_error(self):
         (self.tmp / ".aec" / "config.json").write_text(json.dumps({"version": 1}), encoding="utf-8")

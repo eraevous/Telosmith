@@ -51,7 +51,9 @@ AUTHORITY_KEYS = (*a2a.AUTHORITY_KEYS, "protocol")
 RUNTIME_KEYS = ("network", "model_calls")
 RUNTIME_VALUES = ("never", "optional", "required", "unknown")
 _VERSION = re.compile(r"telosmith\.manifest/(\d+)\.(\d+)")
-_SECRETS = (
+# Credential shapes, each with a fixed description that a problem may quote. (Was `_SECRETS`; CodeQL's
+# clear-text-logging query reads that name as a secret source and flagged the fixed descriptions, Telosmith#118.)
+_SHAPES = (
     ("a credential-shaped token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
                                              r"|xox[abposr]-[A-Za-z0-9-]{6,}|sk-[A-Za-z0-9_-]{20,}"
                                              r"|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})")),
@@ -68,7 +70,7 @@ def redact(text: str) -> str:
     """`text` with every credential-shaped part replaced by [redacted]. Applied to each input value before it is
     formatted into a problem or note (so quoting can't hide a value from it), and again to the finished message as a
     backstop (Codex and Copilot on #110)."""
-    for _, rx in _SECRETS:
+    for _, rx in _SHAPES:
         text = rx.sub("[redacted]", text)
     return text
 
@@ -131,7 +133,7 @@ def _climbs(v: str) -> bool:
 def _scan(v, where, problems) -> None:
     """Every string anywhere under `v`: report credential-shaped values by location, never by value."""
     if isinstance(v, str):
-        for what, rx in _SECRETS:
+        for what, rx in _SHAPES:
             if rx.search(v):
                 problems.append(f"{where} holds {what}; a manifest carries no secrets or environment values")
                 return

@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import a2a, config, manifest, mcp, skills
@@ -71,10 +72,10 @@ def section_problems(sec) -> list[str]:
     for k in ("authority", "runtime"):
         if not isinstance(sec.get(k), dict):
             p.append(f"manifest.{k}: an object")
-    for k in ("other", "skills"):
-        if not isinstance(sec.get(k, []), list):
-            p.append(f"manifest.{k}: a list")
-    if not all(isinstance(s, str) for s in sec.get("skills", []) if isinstance(sec.get("skills", []), list)):
+    if not isinstance(sec.get("other", []), list):
+        p.append("manifest.other: a list")
+    sk = sec.get("skills", [])
+    if not (isinstance(sk, list) and all(isinstance(x, str) for x in sk)):
         p.append("manifest.skills: a list of folder paths")
     a = sec.get("a2a")
     if a is not None and not (isinstance(a, dict) and manifest._str(a.get("url"))):
@@ -116,9 +117,10 @@ class _Session:
             self.proc.stdin.flush()
         except OSError:
             raise CollectError(f"{method}: the server closed its input") from None
+        deadline = time.monotonic() + TIMEOUT_S  # one budget for the whole request, notifications included
         while True:
             try:
-                line = self.lines.get(timeout=TIMEOUT_S)
+                line = self.lines.get(timeout=max(0.0, deadline - time.monotonic()))
             except queue.Empty:
                 raise CollectError(f"{method}: no answer within {TIMEOUT_S:g} s") from None
             if line is None:
@@ -154,7 +156,13 @@ def _collect_list(s: _Session, method: str, key: str) -> tuple[list, dict]:
         if not isinstance(r.get(key), list) or not all(isinstance(x, dict) for x in r[key]):
             raise CollectError(f"{method}: result.{key} isn't a list of objects")
         items.extend(r[key])
-        pages.append({k: r[k] for k in manifest.POLICY_KEYS if k in r})
+        page = {k: r[k] for k in manifest.POLICY_KEYS if k in r}
+        ttl = page.get("ttlMs", 0)
+        if not (type(ttl) is int and ttl >= 0) or ("cacheScope" in page and not manifest._str(page["cacheScope"])):
+            # every page is checked: 0, False and 0.0 compare equal, so a merged value can't vouch for the others
+            raise CollectError(f"{method}: a page's ttlMs isn't a non-negative integer or its cacheScope isn't a "
+                               "non-empty string")
+        pages.append(page)
         nxt = r.get("nextCursor")
         if nxt is None:
             break
@@ -301,7 +309,8 @@ def cli(a) -> int:
     try:
         expected = build(root)
     except config.ConfigError as exc:
-        print(f"{name}: config: {manifest.redact(str(exc))}", file=sys.stderr)
+        # plain-text rule on every quoted value (unknown keys, bad values), not only the credential patterns
+        print(f"{name}: config: {manifest._scrub(manifest.redact(str(exc)))}", file=sys.stderr)
         return 2
     except CollectError as exc:
         print(f"{name}: collection failed: {exc}; nothing written", file=sys.stderr)

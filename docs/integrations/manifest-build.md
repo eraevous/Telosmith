@@ -67,7 +67,7 @@ validated by `aec manifest validate`, which the build runs on its own result bef
 
   A list whose capability isn't advertised is `[]`, with no policy entry.
 - **Pagination.** Each list follows `nextCursor` until a result has none. Pages are joined in order.
-- **Limits.** 10 seconds per request. 100 pages per list.
+- **Limits.** 10 seconds per request, as one deadline: notifications the server sends meanwhile don't extend it. 100 pages per list.
 - **Failures.** Exit 2 and nothing is written for any of these:
   - a cursor that isn't a non-empty string, or one already seen;
   - more than 100 pages;
@@ -80,7 +80,9 @@ validated by `aec manifest validate`, which the build runs on its own result bef
 ## List policy
 
 - Each list result's `ttlMs` and `cacheScope` (MCP 2026-07-28 list-result fields) go to `mcp.listPolicy.<list>`, as
-  the accepted page says. Each key is handled on its own:
+  the accepted page says. Every page's values are type-checked first (`ttlMs` a non-negative integer, not a boolean
+  or float; `cacheScope` a non-empty string), since `0`, `false` and `0.0` compare equal. Each key is then handled
+  on its own:
   - present on every page with one value: kept;
   - present on no page: left out. No default is supplied, and absence isn't read as a value;
   - present on some pages only, or with different values on different pages: a collection failure.
@@ -124,6 +126,7 @@ validated by `aec manifest validate`, which the build runs on its own result bef
   - show text from the server or the file only under `aec manifest validate`'s plain-text rule (`[not shown]`
     otherwise);
   - report exceptions by type, never by message;
+  - pass each quoted value in a config error through the same plain-text rule;
   - never show a server's error message.
 - **Before writing,** the build runs `aec manifest validate` on the whole result, which refuses the credential and
   host-path shapes it recognises. That catches recognisable shapes only (accepted page, rule 7).
