@@ -1,7 +1,7 @@
 """aec manifest build|check (DEC-256 item 5 slice 2; docs/integrations/manifest-build.md).
 
 Test list from Kate's round-12 records (independent): AEC-R-manifest-rebuild-drift@2, -cache-policy@2 and
--collection-safety@2. A fake MCP 2026-07-28 server (stdlib only, written into each temporary repository) plays the
+-collection-safety@2, extended by her round-13 test reading of cad2c3c (HO-AEC-20261127-89MY output). A fake MCP 2026-07-28 server (stdlib only, written into each temporary repository) plays the
 configured server; its behaviour comes from fake.json beside it.
 """
 import contextlib
@@ -38,7 +38,16 @@ for line in sys.stdin:
             print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {}})); sys.stdout.flush()
             time.sleep(0.2)
     if spec.get("garbage") == m:
-        print("this is not json"); sys.stdout.flush(); continue
+        print("this is not json GARBAGE-MARKER"); sys.stdout.flush(); continue
+    if spec.get("long_line") == m:  # one line of n bytes, no newline until the end
+        print("x" * spec["n"]); sys.stdout.flush(); continue
+    if spec.get("flood") == m:  # many short notification lines
+        for _ in range(spec["n"]):
+            print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {}}))
+        sys.stdout.flush(); continue
+    if spec.get("retarget") == m:  # change the config's target path mid-collection
+        c = json.load(open(".aec/config.json")); c["manifest"]["path"] = "moved.json"
+        json.dump(c, open(".aec/config.json", "w"))
     if spec.get("exit") == m:
         sys.exit(3)
     if spec.get("error") == m:
@@ -125,6 +134,22 @@ class Build(Base):
         self.assertEqual(self.cmd("build")[0], 0)
         self.assertEqual(self.written()["sockets"]["mcp"]["tools"], [TOOL, TOOL2])
 
+    def test_policy_survives_pagination(self):
+        self.fake(lists={"tools/list": [{"items": [TOOL], "policy": POLICY}, {"items": [TOOL2], "policy": POLICY}]})
+        self.assertEqual(self.cmd("build")[0], 0)
+        self.assertEqual(self.written()["sockets"]["mcp"]["listPolicy"], {"tools": POLICY})
+
+    def test_policy_absent_on_every_page_is_left_out(self):
+        self.fake(lists={"tools/list": [{"items": [TOOL]}, {"items": [TOOL2]}]})
+        self.assertEqual(self.cmd("build")[0], 0)
+        self.assertEqual(self.written()["sockets"]["mcp"]["listPolicy"], {})
+
+    def test_advertised_prompts_are_collected(self):
+        self.fake(caps={"prompts": {}}, lists={"prompts/list": [{"items": [{"name": "p1"}]}]})
+        self.assertEqual(self.cmd("build")[0], 0)
+        mcp = self.written()["sockets"]["mcp"]
+        self.assertEqual((mcp["prompts"], mcp["tools"]), ([{"name": "p1"}], []))
+
     def test_unadvertised_lists_are_empty_with_no_policy(self):
         self.cmd("build")
         mcp = self.written()["sockets"]["mcp"]
@@ -166,7 +191,9 @@ class CollectionFailures(Base):
                 code, out, err = self.cmd(which)
                 self.assertEqual(code, 2, (which, out, err))
                 self.assertIn("collection failed", err)
-        self.assertEqual((self.tmp / ".aec" / "manifest.json").read_bytes(), before)
+                self.assertNotIn("leak", out + err)  # the server's stderr never reaches the output
+                # preserved after each invocation, not only after both (Kate, round 13)
+                self.assertEqual((self.tmp / ".aec" / "manifest.json").read_bytes(), before, which)
         return err
 
     def test_json_rpc_error(self):
@@ -207,7 +234,34 @@ class CollectionFailures(Base):
         self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]}, not_complete="tools/list")
 
     def test_line_that_is_not_json(self):
-        self.assert_fails_without_writing(lists={}, garbage="tools/list")
+        err = self.assert_fails_without_writing(lists={}, garbage="tools/list")
+        self.assertNotIn("GARBAGE-MARKER", err)  # malformed stdout isn't echoed
+
+    def test_empty_cursor(self):
+        self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}, {"items": [TOOL2]}]}, cursor_value="")
+
+    def test_cache_scope_only_conflict(self):
+        self.assert_fails_without_writing(lists={"tools/list": [
+            {"items": [TOOL], "policy": {"cacheScope": "public"}}, {"items": [TOOL2], "policy": {"cacheScope": "user"}}]})
+
+    def test_per_key_presence_mismatch(self):  # both pages have policy, but not the same keys
+        self.assert_fails_without_writing(lists={"tools/list": [
+            {"items": [TOOL], "policy": POLICY}, {"items": [TOOL2], "policy": {"ttlMs": 0}}]})
+
+    def test_line_over_the_byte_cap(self):
+        with mock.patch.object(manifest_build, "MAX_LINE", 1000):
+            err = self.assert_fails_without_writing(lists={}, long_line="tools/list", n=5000)
+        self.assertIn("longer than 1000 bytes", err)
+
+    def test_line_at_the_byte_cap_passes(self):  # decoy: a reply line just under the cap is fine
+        self.fake(lists={"tools/list": [{"items": [TOOL]}]})
+        with mock.patch.object(manifest_build, "MAX_LINE", 4000):
+            self.assertEqual(self.cmd("build")[0], 0)
+
+    def test_session_over_the_stdout_cap(self):
+        with mock.patch.object(manifest_build, "MAX_STDOUT", 20000):
+            err = self.assert_fails_without_writing(lists={}, flood="tools/list", n=2000)
+        self.assertIn("more than 20000 bytes", err)
 
     def test_unsupported_protocol_version(self):
         self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]}, versions=["2025-11-25"])
@@ -260,6 +314,37 @@ class Check(Base):
         self.assertEqual(code, 1)
         self.assertIn("changed: sockets.mcp.listPolicy.tools.ttlMs", err)
 
+    def test_policy_appearing_fails(self):
+        self.fake(lists={"tools/list": [{"items": [TOOL]}]})
+        self.cmd("build")
+        self.fake(lists={"tools/list": [{"items": [TOOL], "policy": POLICY}]})
+        code, _, err = self.cmd("check")
+        self.assertEqual(code, 1)
+        self.assertIn("added: sockets.mcp.listPolicy.tools", err)
+
+    def test_changed_config_derived_value_fails(self):  # tool.* is config-derived, not hand-declared
+        self.config(tool={"id": "fake", "name": "Fake", "description": "A different description."})
+        code, _, err = self.cmd("check")
+        self.assertEqual(code, 1)
+        self.assertIn("changed: tool.description", err)
+
+    def test_expected_field_deleted_from_the_file_fails(self):
+        self.edit(lambda m: m["sockets"]["mcp"].pop("serverInfo"))
+        code, _, err = self.cmd("check")
+        self.assertEqual(code, 1)
+        self.assertIn("added: sockets.mcp.serverInfo", err)
+
+    def test_nested_key_reordering_passes(self):
+        self.edit(lambda m: m["sockets"]["mcp"]["tools"].__setitem__(
+            0, dict(reversed(list(m["sockets"]["mcp"]["tools"][0].items())))))
+        self.assertEqual(self.cmd("check")[0], 0)
+
+    def test_invalid_committed_manifest_fails_on_its_own(self):
+        self.edit(lambda m: m.update({"manifest": "0.1"}))
+        code, _, err = self.cmd("check")
+        self.assertEqual(code, 1)
+        self.assertIn("the committed manifest is invalid", err)
+
     def test_policy_removal_fails(self):
         self.fake(lists={"tools/list": [{"items": [TOOL]}]})
         code, _, err = self.cmd("check")
@@ -273,9 +358,21 @@ class Check(Base):
         self.assertIn("removed: sockets.mcp.x-old", err)
 
     def test_check_never_writes(self):
+        # on success, different, invalid, unreadable and refused (Kate, round 13)
+        def same(expect):
+            before = self.path.read_bytes()
+            code = self.cmd("check")[0]
+            self.assertEqual((code, self.path.read_bytes()), (expect, before))
+        same(0)
         self.fake(lists={"tools/list": [{"items": [TOOL2], "policy": POLICY}]})
+        same(1)
+        self.path.write_text("{not json", encoding="utf-8")
+        same(1)
+        self.fake(lists={"tools/list": [{"items": [{"name": "t", "description": "API_TOKEN=hunter2-value",
+                                                     "inputSchema": {"type": "object"}}]}]})
+        same(1)
         before = self.path.read_bytes()
-        self.assertEqual(self.cmd("check")[0], 1)
+        self.assertEqual(run(["manifest", "check", "--root", str(self.tmp)])[0], 2)
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_diff_values_are_not_shown(self):
@@ -312,7 +409,8 @@ class Safety(Base):
         self.cmd("build")
         seen = json.loads((self.tmp / "env_seen.json").read_text(encoding="utf-8"))
         self.assertNotIn("SECRET_FOR_TEST", seen)
-        self.assertTrue(set(seen) <= set(manifest_build.BASE_ENV) | {"PWD", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"},
+        # a literal allow-set, not BASE_ENV, so widening BASE_ENV fails this test (Kate, round 13)
+        self.assertTrue(set(seen) <= {"PATH", "SYSTEMROOT", "PWD", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"},
                         sorted(seen))
 
     def test_subprocess_stderr_is_never_shown(self):
@@ -320,6 +418,56 @@ class Safety(Base):
         code, out, err = self.cmd("build")
         self.assertEqual(code, 0)
         self.assertNotIn("hunter2", out + err)
+        self.assertNotIn("leak", out + err)  # no stderr at all, not only the secret
+
+    def test_skill_path_escape_is_refused(self):
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        (outside / "SKILL.md").write_text("---\nname: x\ndescription: y\n---\n", encoding="utf-8")
+        cases = [["../" + outside.name], [str(outside)]]
+        try:
+            (self.tmp / "skills").symlink_to(outside, target_is_directory=True)
+            cases.append(["skills"])
+        except (OSError, NotImplementedError):
+            pass
+        for paths in cases:
+            self.config(skills=paths)
+            code, _, err = self.cmd("build")
+            self.assertEqual(code, 2, (paths, err))
+            self.assertFalse((self.tmp / ".aec" / "manifest.json").exists())
+
+    def test_target_comes_from_the_section_the_build_validated(self):
+        # the config changing during collection doesn't move the write (Kate, round 13)
+        self.fake(lists={"tools/list": [{"items": [TOOL]}]}, retarget="tools/list")
+        self.assertEqual(self.cmd("build")[0], 0)
+        self.assertTrue((self.tmp / ".aec" / "manifest.json").exists())
+        self.assertFalse((self.tmp / "moved.json").exists())
+
+    def test_unknown_authority_key_is_refused(self):
+        self.config(authority={"needs": [], "accepts": [], "grants": [], "extra": []})
+        code, _, err = self.cmd("build")
+        self.assertEqual(code, 2)
+        self.assertIn("manifest.authority", err)
+
+    def test_a2a_fields_that_come_from_elsewhere_are_refused(self):
+        for k in manifest_build.A2A_FROM_ELSEWHERE:
+            self.config(a2a={"url": "https://example.test/a2a", k: "x"})
+            code, _, err = self.cmd("build")
+            self.assertEqual(code, 2, k)
+            self.assertIn("manifest.a2a", err)
+
+    def test_write_failure_reports_the_type_and_keeps_the_old_file(self):
+        self.assertEqual(self.cmd("build")[0], 0)
+        path = self.tmp / ".aec" / "manifest.json"
+        before = path.read_bytes()
+        self.fake(lists={"tools/list": [{"items": [TOOL2]}]})
+        with mock.patch.object(manifest_build.os, "replace", side_effect=PermissionError(13, "denied", str(self.tmp))):
+            code, out, err = self.cmd("build")
+        self.assertEqual(code, 2)
+        self.assertIn("PermissionError", err)
+        self.assertNotIn(str(self.tmp), out + err)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(list((self.tmp / ".aec").glob("*.tmp")), [])
 
     def test_secret_shaped_server_output_refuses_the_write(self):
         self.fake(lists={"tools/list": [{"items": [{"name": "t", "description": "API_TOKEN=hunter2-value",

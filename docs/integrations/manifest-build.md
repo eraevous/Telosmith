@@ -30,8 +30,13 @@ that runs):
    "a2a": null}}
 ```
 
-- `a2a` is `null` or the arguments `aec a2a card` takes (`url` at least); name, description and version come from
-  `tool` and the server, and the authority extension from `authority`.
+- `a2a` is `null` or the arguments `aec a2a card` takes: `url` (required), and optionally `binding`, `provider`,
+  `streaming`, `push_notifications`, `input_modes`, `output_modes`, `documentation_url` and `skills`. Name,
+  description and version come from `tool` and the server, and the authority extension from `authority`; setting
+  `name`, `description`, `version` or `authority` inside `a2a` is a config error rather than being dropped silently.
+  An argument `aec a2a card` doesn't take is a config error too.
+- `authority` takes only `needs`, `accepts` and `grants`. Any other key is a config error: the manifest has no place
+  for it, so it would otherwise vanish.
 - `pass_env` names environment variables the server needs. Names only; their values are never written or shown.
 
 ## Where each field comes from
@@ -40,8 +45,8 @@ The accepted page's terms are kept. Kate asked that config-derived fields not be
 
 | Kind | Fields | Source |
 |---|---|---|
-| generated | `sockets.mcp` (all of it), `tool.version`, `sockets.a2a.agentCard`, `sockets.skills[].name` and `.description` | the server's answers, `aec a2a card`, the skill folders' `SKILL.md` |
-| config-derived | `tool.id`, `tool.name`, `tool.description`, `sockets.authority`, `sockets.skills[].path` | `manifest.*` in the config, copied |
+| generated | `sockets.mcp` (all of it except `command`), `tool.version`, `sockets.a2a.agentCard`, `sockets.skills[].name` and `.description` | the server's answers, `aec a2a card`, the skill folders' `SKILL.md` |
+| config-derived | `tool.id`, `tool.name`, `tool.description`, `sockets.authority`, `sockets.skills[].path`, `sockets.mcp.command` | `manifest.*` in the config, copied (`command` is the argv the build launched) |
 | hand-declared | `sockets.other`, `runtime` | `manifest.*` in the config: statements people make that nothing can derive (the accepted page's "only `other` and `runtime` are hand-declared") |
 
 `check` compares the whole file with a fresh build, so all three kinds are compared. Hand-declared fields are also
@@ -68,14 +73,18 @@ validated by `aec manifest validate`, which the build runs on its own result bef
   A list whose capability isn't advertised is `[]`, with no policy entry.
 - **Pagination.** Each list follows `nextCursor` until a result has none. Pages are joined in order.
 - **Limits.** 10 seconds per request, as one deadline: notifications the server sends meanwhile don't extend it. 100 pages per list.
+  stdout is read as bytes: at most 8 MiB in one line and 64 MiB in the session. stderr is read in chunks and
+  discarded as it arrives, so it never accumulates.
 - **Failures.** Exit 2 and nothing is written for any of these:
   - a cursor that isn't a non-empty string, or one already seen;
   - more than 100 pages;
   - a JSON-RPC error;
   - a result that isn't an object with `resultType: "complete"`;
   - a line that isn't JSON;
+  - a line that isn't UTF-8, a line over 8 MiB, or more than 64 MiB of stdout;
   - a timeout;
   - the process exiting before it answers.
+  After any failure the server process is killed rather than waited for.
 
 ## List policy
 
@@ -101,12 +110,20 @@ validated by `aec manifest validate`, which the build runs on its own result bef
   - `added`: in the build, not in the file;
   - `removed`: in the file, not in the build (Kate: a removed field fails);
   - `changed`: different values.
-- Values are never printed.
-- Exit codes:
-  - 0: the same;
-  - 1: different, invalid, or unreadable;
-  - 2: refused, a config problem, or a collection failure.
-- `check` never writes.
+- Values are never printed. Each key in a JSON path goes through the same plain-text rule as values
+  (`aec.manifest._echo`), since a committed file or a server can choose its keys: a key that isn't short and plain
+  shows as `[not shown]`.
+- The committed file is also validated on its own (`aec manifest validate`), so a problem it has is reported even
+  where the build happens to match it.
+- Exit codes, for both commands:
+  - 0: the same (`check`), or written (`build`);
+  - 1: different, or the committed file invalid or unreadable (`check`); or the built result fails
+    `aec manifest validate` (both). Collection worked in that last case; what it produced, or the config it copied,
+    is what's wrong. Nothing is written;
+  - 2: refused, a config problem, a collection failure, or the write failing (`build`, reported by exception type;
+    the old file stays).
+- `check` never writes: not on success, a difference, an invalid or unreadable file, or a refusal.
+- The target path is taken from the config section the build validated, not from a second read after collection.
 
 ## Trust boundary and disclosure
 

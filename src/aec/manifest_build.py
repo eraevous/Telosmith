@@ -20,6 +20,9 @@ List policy (`AEC-R-manifest-cache-policy@2`): each list result's `ttlMs` and `c
 `mcp.listPolicy.<list>`, key by key. A key on every page must have one value on every page; a key on some pages and
 not others is an error; a key on no page is left out (no default is supplied).
 
+Bounds: stdout is read as bytes, at most MAX_LINE bytes per line and MAX_STDOUT bytes in all; past either, the
+collection fails. stderr is read in chunks and discarded as it arrives, so nothing accumulates (Kate, round 13).
+
 Disclosure: the child gets a minimal environment (PATH and, on Windows, SYSTEMROOT, plus the variable *names* in
 `manifest.pass_env`); its working directory is ROOT; its stderr is read and dropped, never shown. Diagnostics name
 JSON paths; values appear only through `aec.manifest`'s plain-text rule (`[not shown]` otherwise); exceptions are
@@ -28,6 +31,7 @@ and host-path shapes it recognises). That catches recognisable shapes only.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import queue
@@ -46,12 +50,18 @@ MAX_PAGES = 100
 LISTS = (("tools", "tools", "tools/list", "tools"), ("resources", "resources", "resources/list", "resources"),
          ("resources", "resourceTemplates", "resources/templates/list", "resourceTemplates"),
          ("prompts", "prompts", "prompts/list", "prompts"))  # (capability, manifest list, method, result key)
+MAX_LINE = 8 * 1024 * 1024     # bytes in one stdout line
+MAX_STDOUT = 64 * 1024 * 1024  # bytes of stdout in one session
 BASE_ENV = ("PATH", "SYSTEMROOT")
+A2A_FROM_ELSEWHERE = ("name", "description", "version", "authority")  # from tool, the server and authority
 TOOL_FROM_CONFIG = ("id", "name", "description")
 
 
 class CollectError(Exception):
     """Collection failed; the message is safe to print (no values from the server or the environment)."""
+
+
+_TOO_LONG, _TOO_MUCH = "too long", "too much"  # reader sentinels (bytes lines are never str)
 
 
 def section_problems(sec) -> list[str]:
@@ -72,6 +82,9 @@ def section_problems(sec) -> list[str]:
     for k in ("authority", "runtime"):
         if not isinstance(sec.get(k), dict):
             p.append(f"manifest.{k}: an object")
+    if isinstance(sec.get("authority"), dict) and set(sec["authority"]) - set(a2a.AUTHORITY_KEYS):
+        # refused, not dropped: a key the manifest has no place for would vanish silently (Kate, round 13)
+        p.append(f"manifest.authority: only the keys {', '.join(a2a.AUTHORITY_KEYS)}")
     if not isinstance(sec.get("other", []), list):
         p.append("manifest.other: a list")
     sk = sec.get("skills", [])
@@ -80,6 +93,9 @@ def section_problems(sec) -> list[str]:
     a = sec.get("a2a")
     if a is not None and not (isinstance(a, dict) and manifest._str(a.get("url"))):
         p.append("manifest.a2a: null, or an object with at least url (the other arguments of aec a2a card)")
+    elif isinstance(a, dict) and set(a) & set(A2A_FROM_ELSEWHERE):
+        p.append("manifest.a2a: name, description, version and authority come from manifest.tool, the server and "
+                 "manifest.authority; don't set them here")
     path = sec.get("path", ".aec/manifest.json")
     if not (manifest._str(path) and not manifest._host_path(path) and not manifest._climbs(path)):
         p.append("manifest.path: a relative path inside the repository")
@@ -93,18 +109,40 @@ class _Session:
         env = {k: os.environ[k] for k in (*BASE_ENV, *sec.get("pass_env", [])) if k in os.environ}
         try:
             self.proc = subprocess.Popen(sec["command"], cwd=root, env=env, stdin=subprocess.PIPE,
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                         encoding="utf-8", errors="replace")
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except (OSError, ValueError) as exc:
             raise CollectError(f"could not start manifest.command ({type(exc).__name__})") from None
         self.lines: queue.Queue = queue.Queue()
         threading.Thread(target=self._read, daemon=True).start()
-        threading.Thread(target=self.proc.stderr.read, daemon=True).start()  # drained and dropped, never shown
+        threading.Thread(target=self._drain, daemon=True).start()
         self.next_id = 0
 
+    def _drain(self):
+        """stderr: read and dropped as it arrives, never kept or shown."""
+        try:
+            while self.proc.stderr.read(65536):
+                pass
+        except (OSError, ValueError):
+            pass
+
     def _read(self):
-        for line in self.proc.stdout:
-            self.lines.put(line)
+        """stdout lines onto the queue, within MAX_LINE and MAX_STDOUT; a sentinel ends reading past either."""
+        total = 0
+        try:
+            while True:
+                line = self.proc.stdout.readline(MAX_LINE + 1)
+                if not line:
+                    break
+                total += len(line)
+                if len(line) > MAX_LINE:
+                    self.lines.put(_TOO_LONG)
+                    return
+                if total > MAX_STDOUT:
+                    self.lines.put(_TOO_MUCH)
+                    return
+                self.lines.put(line)
+        except (OSError, ValueError):
+            pass
         self.lines.put(None)
 
     def request(self, method: str, params: dict | None = None) -> dict:
@@ -113,7 +151,7 @@ class _Session:
         params["_meta"] = {mcp.META_VERSION: PROTOCOL}
         msg = {"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}
         try:
-            self.proc.stdin.write(json.dumps(msg) + "\n")
+            self.proc.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
             self.proc.stdin.flush()
         except OSError:
             raise CollectError(f"{method}: the server closed its input") from None
@@ -125,9 +163,13 @@ class _Session:
                 raise CollectError(f"{method}: no answer within {TIMEOUT_S:g} s") from None
             if line is None:
                 raise CollectError(f"{method}: the server exited before answering")
+            if line is _TOO_LONG:
+                raise CollectError(f"{method}: the server wrote a line longer than {MAX_LINE} bytes")
+            if line is _TOO_MUCH:
+                raise CollectError(f"{method}: the server wrote more than {MAX_STDOUT} bytes in this session")
             try:
-                reply = json.loads(line)
-            except json.JSONDecodeError:
+                reply = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 raise CollectError(f"{method}: the server wrote a line that isn't JSON") from None
             if isinstance(reply, dict) and reply.get("id") == self.next_id:
                 break  # anything else (a notification) is skipped
@@ -139,13 +181,19 @@ class _Session:
             raise CollectError(f"{method}: the result isn't an object with resultType 'complete'")
         return result
 
-    def close(self):
-        try:
+    def close(self, failed: bool = False):
+        """Close stdin and wait; after a failure, or if the server doesn't exit in time, kill it."""
+        with contextlib.suppress(OSError):
             self.proc.stdin.close()
-            self.proc.wait(timeout=TIMEOUT_S)
-        except (OSError, subprocess.TimeoutExpired):
+        if not failed:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self.proc.wait(timeout=TIMEOUT_S)
+        if self.proc.poll() is None:
             self.proc.kill()
             self.proc.wait()
+        for f in (self.proc.stdout, self.proc.stderr):  # the reader threads see EOF or ValueError and stop
+            with contextlib.suppress(OSError, ValueError):
+                f.close()
 
 
 def _collect_list(s: _Session, method: str, key: str) -> tuple[list, dict]:
@@ -189,6 +237,7 @@ def _collect_list(s: _Session, method: str, key: str) -> tuple[list, dict]:
 def collect(root: Path, sec: dict) -> dict:
     """The `sockets.mcp` object from one fresh session with the configured server."""
     s = _Session(root, sec)
+    failed = True
     try:
         d = s.request("server/discover")
         versions, caps = d.get("supportedVersions"), d.get("capabilities")
@@ -207,9 +256,10 @@ def collect(root: Path, sec: dict) -> dict:
                 out[lst], pol = _collect_list(s, method, key)
                 if pol:
                     out["listPolicy"][lst] = pol
+        failed = False
         return out
     finally:
-        s.close()
+        s.close(failed)
 
 
 def _inside(root: Path, path: Path) -> bool:
@@ -236,6 +286,12 @@ def _skill_entries(root: Path, paths) -> list[dict]:
 
 def build(root: Path) -> dict:
     """The manifest for ROOT from its own config and a fresh collection. Raises CollectError or ConfigError."""
+    return build_with_section(root)[0]
+
+
+def build_with_section(root: Path) -> tuple[dict, dict]:
+    """(manifest, the validated `manifest` config section it was built from). The caller uses that section, not a
+    second read of the config, to find the target (Kate, round 13: the file could change during collection)."""
     # The trust is in this repository's config, so it must be this repository's file: a symlinked `.aec` or
     # config.json (or one resolving outside ROOT) is refused before it is parsed (Codex security review on #118).
     aec_dir, cfg_file = root / ".aec", root / config.CONFIG_PATH
@@ -252,7 +308,7 @@ def build(root: Path) -> dict:
     authority = {k: sec["authority"].get(k, []) for k in a2a.AUTHORITY_KEYS}
     card = None
     if sec.get("a2a") is not None:
-        args = {k: v for k, v in sec["a2a"].items() if k not in ("name", "description", "version", "authority")}
+        args = dict(sec["a2a"])  # section_problems refused name, description, version and authority
         try:
             card = a2a.build_card(name=sec["tool"]["name"], description=sec["tool"]["description"], version=version,
                                   authority=authority, **args)
@@ -267,7 +323,7 @@ def build(root: Path) -> dict:
                     "authority": {**authority, "protocol": a2a.AUTHORITY_PROTOCOL},
                     "other": list(sec.get("other", []))},
         "runtime": sec["runtime"],
-    }
+    }, sec
 
 
 def diff(expected, actual, where="") -> list[tuple[str, str]]:
@@ -290,9 +346,8 @@ def diff(expected, actual, where="") -> list[tuple[str, str]]:
     return [] if same else [("changed", where or "(whole file)")]
 
 
-def _target(root: Path, sec) -> Path:
-    rel = sec.get("path", ".aec/manifest.json") if isinstance(sec, dict) else ".aec/manifest.json"
-    return root / rel
+def _target(root: Path, sec: dict) -> Path:
+    return root / sec.get("path", ".aec/manifest.json")
 
 
 def add_parser(m_sub) -> None:
@@ -313,7 +368,7 @@ def cli(a) -> int:
         return 2
     root = Path(a.root)
     try:
-        expected = build(root)
+        expected, sec = build_with_section(root)
     except config.ConfigError as exc:
         # plain-text rule on every quoted value (unknown keys, bad values), not only the credential patterns
         print(f"{name}: config: {manifest._scrub(manifest.redact(str(exc)))}", file=sys.stderr)
@@ -322,11 +377,10 @@ def cli(a) -> int:
         print(f"{name}: collection failed: {exc}; nothing written", file=sys.stderr)
         return 2
     problems, _ = manifest.validate(expected, root=root)
-    if problems:
+    if problems:  # exit 1, not 2: collection worked; what it produced (or the config it copied) is what's wrong
         for p in problems:
-            print(f"{name}: the built manifest is invalid: {p}", file=sys.stderr)
+            print(f"{name}: the built manifest is invalid: {p}; nothing written", file=sys.stderr)
         return 1
-    sec = config.own(root).get("manifest")
     target = _target(root, sec)
     text = json.dumps(expected, indent=2, ensure_ascii=False) + "\n"
     rel = manifest._echo(sec.get("path", ".aec/manifest.json"))
@@ -334,10 +388,21 @@ def cli(a) -> int:
         print(f"{name}: {rel} resolves outside the repository; refused", file=sys.stderr)
         return 2
     if a.manifest_cmd == "build":
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False, suffix=".tmp") as f:
-            f.write(text)
-        os.replace(f.name, target)
+        tmp = None
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False,
+                                             suffix=".tmp") as f:
+                tmp = f.name
+                f.write(text)
+            os.replace(tmp, target)
+        except OSError as exc:  # by type only: a message would carry host paths (Kate, round 13)
+            if tmp is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            print(f"{name}: cannot write {rel} ({type(exc).__name__}); the old file, if any, is unchanged",
+                  file=sys.stderr)
+            return 2
         print(f"{name}: wrote {rel}")
         return 0
     try:
@@ -345,9 +410,14 @@ def cli(a) -> int:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(f"{name}: cannot read {rel} ({type(exc).__name__})", file=sys.stderr)
         return 1
+    invalid, _ = manifest.validate(committed, root=root)  # the committed file on its own, too (Kate, round 13)
+    for p in invalid:
+        print(f"{name}: the committed manifest is invalid: {p}", file=sys.stderr)
     found = diff(expected, committed)
     for kind, path in found:
         print(f"{name}: {kind}: {path}", file=sys.stderr)
+    if invalid and not found:
+        return 1
     if found:
         print(f"{name}: {rel} differs from a fresh build in {len(found)} place(s); run aec manifest build",
               file=sys.stderr)
