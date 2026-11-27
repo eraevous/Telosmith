@@ -29,10 +29,12 @@ META = "io.modelcontextprotocol/protocolVersion"
 sys.stderr.write("leak: " + os.environ.get("SECRET_FOR_TEST", "absent") + "\n"); sys.stderr.flush()
 if spec.get("dump_env"):
     json.dump(dict(os.environ), open("env_seen.json", "w"))
-def out(text):  # every stdout line goes through here, so a test can measure them
+def out(text):  # every stdout line goes through here, as bytes, so a test measures exactly what was written
+    data = (text + "\n").encode("utf-8")  # not print(): Windows text mode would add a \r the log didn't count
     if spec.get("log_lengths"):
-        open("lengths.txt", "a").write(str(len((text + "\n").encode("utf-8"))) + "\n")
-    print(text); sys.stdout.flush()
+        with open("lengths.txt", "a") as f:
+            f.write(str(len(data)) + "\n")
+    sys.stdout.buffer.write(data); sys.stdout.flush()
 if spec.get("descendant"):  # a child that inherits stdout and stderr and outlives the server
     import subprocess
     subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
@@ -80,6 +82,8 @@ for line in sys.stdin:
     r["resultType"] = "incomplete" if spec.get("not_complete") == m else "complete"
     r["_meta"] = {"io.modelcontextprotocol/serverInfo": {"name": "fake", "version": spec.get("version", "1.2.3")}}
     out(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r}))
+    if spec.get("deep") == m:  # nested arrays past the decoder's limit, far under the byte caps
+        out("[" * spec["n"] + "]" * spec["n"]); continue
     if spec.get("trailing_bytes") == m:  # answer first, then a bad line
         sys.stdout.buffer.write(spec["bytes"].encode("latin-1")); sys.stdout.flush()
     if spec.get("trailing_flood") == m:  # answer first, then overrun
@@ -231,6 +235,19 @@ class CollectionFailures(Base):
     def test_cursor_of_the_wrong_type(self):
         self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}, {"items": [TOOL2]}]}, cursor_value=7)
 
+    def test_explicit_null_cursor(self):  # present but null isn't "no more pages" (Codex on f455156)
+        self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}, {"items": [TOOL2]}]},
+                                          cursor_value=None)
+
+    def test_json_nested_past_the_decoder_limit(self):  # about 40 KB, far under the byte caps (Codex on f455156)
+        err = self.assert_fails_without_writing(lists={}, deep="tools/list", n=20000)
+        self.assertIn("nested too deeply", err)
+        self.assertNotIn("Traceback", err)
+        self.fake(lists={"tools/list": [{"items": [TOOL], "policy": POLICY}]})  # a good server for the first build
+        err = self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]}, trailing_bytes="tools/list",
+                                                bytes="[" * 20000 + "]" * 20000 + "\n")
+        self.assertIn("nested too deeply after its last answer", err)
+
     def test_pages_disagree_on_policy(self):
         self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL], "policy": POLICY},
                                         {"items": [TOOL2], "policy": {"ttlMs": 5, "cacheScope": "public"}}]})
@@ -253,6 +270,7 @@ class CollectionFailures(Base):
         # past the deadline, already-queued notifications aren't read one by one (Kate, round 14)
         s = object.__new__(manifest_build._Session)
         s.proc, s.next_id, s.overrun = mock.Mock(), 0, None
+        s.proc.stdin.write.side_effect = len  # a whole write, so the writer thread ends cleanly
         s.lines = manifest_build.queue.Queue()
         for _ in range(5):
             s.lines.put(b'{"jsonrpc": "2.0", "method": "notifications/progress", "params": {}}\n')
@@ -616,6 +634,18 @@ class Safety(Base):
         self.assertEqual(code, 2)
         self.assertIn("PermissionError", err)
         self.assertNotIn(str(self.tmp), out + err)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(list((self.tmp / ".aec").glob("*.tmp")), [])
+
+    def test_lone_surrogate_refuses_the_write_and_leaves_no_temp_file(self):  # Codex on f455156
+        self.assertEqual(self.cmd("build")[0], 0)
+        path = self.tmp / ".aec" / "manifest.json"
+        before = path.read_bytes()
+        self.fake(lists={"tools/list": [{"items": [{"name": "t", "description": "bad \udcff",
+                                                     "inputSchema": {"type": "object"}}]}]})
+        code, out, err = self.cmd("build")
+        self.assertEqual(code, 2, err)
+        self.assertIn("can't be encoded as UTF-8", err)
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual(list((self.tmp / ".aec").glob("*.tmp")), [])
 

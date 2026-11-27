@@ -197,6 +197,8 @@ class _Session:
                 reply = json.loads(line.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 raise CollectError(f"{method}: the server wrote a line that isn't JSON") from None
+            except RecursionError:  # nesting past the decoder's limit, well under the byte caps (Codex on f455156)
+                raise CollectError(f"{method}: the server wrote JSON nested too deeply") from None
             if isinstance(reply, dict) and reply.get("id") == self.next_id:
                 break  # anything else (a notification) is skipped
         if "error" in reply:
@@ -230,6 +232,8 @@ class _Session:
                 json.loads(line.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 raise CollectError("session: the server wrote a line that isn't JSON after its last answer") from None
+            except RecursionError:
+                raise CollectError("session: the server wrote JSON nested too deeply after its last answer") from None
 
     def close(self, failed: bool = False):
         """Close stdin and let the server exit (killed after TIMEOUT_S); after a failure, kill it first, so a write
@@ -277,9 +281,9 @@ def _collect_list(s: _Session, method: str, key: str) -> tuple[list, dict]:
             raise CollectError(f"{method}: a page's ttlMs isn't a non-negative integer or its cacheScope isn't a "
                                "non-empty string")
         pages.append(page)
-        nxt = r.get("nextCursor")
-        if nxt is None:
+        if "nextCursor" not in r:  # absent ends pagination; a present null is a bad cursor (Codex on f455156)
             break
+        nxt = r["nextCursor"]
         if not isinstance(nxt, str) or not nxt:
             raise CollectError(f"{method}: nextCursor isn't a non-empty string")
         if nxt in seen:
@@ -457,13 +461,18 @@ def cli(a) -> int:
         print(f"{name}: {rel} resolves outside the repository; refused", file=sys.stderr)
         return 2
     if a.manifest_cmd == "build":
+        try:  # before any file exists: a lone surrogate from the server can't be written as UTF-8 (Codex on f455156)
+            data = text.encode("utf-8")
+        except UnicodeEncodeError:
+            print(f"{name}: the built manifest can't be encoded as UTF-8 (a lone surrogate in a server value); "
+                  "nothing written", file=sys.stderr)
+            return 2
         tmp = None
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False,
-                                             suffix=".tmp") as f:
+            with tempfile.NamedTemporaryFile("wb", dir=target.parent, delete=False, suffix=".tmp") as f:
                 tmp = f.name
-                f.write(text)
+                f.write(data)
             os.replace(tmp, target)
         except OSError as exc:  # by type only: a message would carry host paths (Kate, round 13)
             if tmp is not None:

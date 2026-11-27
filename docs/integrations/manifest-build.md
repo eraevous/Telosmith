@@ -72,7 +72,7 @@ validated by `aec manifest validate`, which the build runs on its own result bef
   | `prompts` | `prompts/list` | `prompts` |
 
   A list whose capability isn't advertised is `[]`, with no policy entry.
-- **Pagination.** Each list follows `nextCursor` until a result has none. Pages are joined in order.
+- **Pagination.** Each list follows `nextCursor` until a result has no `nextCursor` key. Pages are joined in order. A `nextCursor` that is present must be a non-empty string: `null` is a failure, not the last page.
 - **Limits.** 10 seconds per request, as one deadline: notifications the server sends meanwhile don't extend it. 100 pages per list.
   The deadline starts before the request is written and covers the write, so a server that stops reading its input
   can't block the build. It is checked before each message is taken, so notifications already queued can't
@@ -90,11 +90,13 @@ validated by `aec manifest validate`, which the build runs on its own result bef
   - more than 100 pages;
   - a JSON-RPC error;
   - a result that isn't an object with `resultType: "complete"`;
-  - a line that isn't JSON;
+  - a line that isn't JSON, or JSON nested too deeply for the decoder;
   - a line that isn't UTF-8, a line over 8 MiB, or more than 64 MiB of stdout;
   - a timeout;
   - the process exiting before it answers.
   After any failure the server process is killed rather than waited for.
+
+  `build` also exits 2, writing nothing, when the result can't be encoded as UTF-8 (a lone surrogate in a value the server sent).
 
 ## List policy
 
