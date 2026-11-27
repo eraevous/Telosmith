@@ -5,7 +5,7 @@
 The schema is `docs/integrations/manifest.md` (`AEC-D-manifest-schema@3`, accepted by Zach on Telosmith#103). This
 module checks a manifest's shape and its internal agreements; it never launches anything, the manifest's own
 `mcp.command` least of all (MAN-06). `aec manifest build|check`, which start the repository's configured server and
-compare a fresh build field by field, come in a later slice.
+compare a fresh build field by field, are in `aec.manifest_build`.
 
 What is checked:
 - the objects Telosmith owns (the envelope, `tool`, `sockets`, the `mcp` and `a2a` wrappers, `skills` and `other`
@@ -340,9 +340,14 @@ def add_parser(sub) -> None:
                                           "never runs anything")
     v.add_argument("file")
     v.add_argument("--root", help="repository root, to check the skill folders the manifest names")
+    from . import manifest_build
+    manifest_build.add_parser(m_sub)
 
 
 def cli(a, ap) -> int:
+    if a.manifest_cmd in ("build", "check"):
+        from . import manifest_build
+        return manifest_build.cli(a)
     if a.root:  # with --root, FILE (after following any symlink) must be in the repository it attests to
         try:
             inside = Path(a.file).resolve().is_relative_to(Path(a.root).resolve())

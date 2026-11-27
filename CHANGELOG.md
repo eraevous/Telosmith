@@ -5,6 +5,12 @@ All notable changes to Telosmith (formerly AEC). Versions follow [semantic versi
 
 ## [Unreleased]
 
+### Added (AEC-R-manifest-build-impl@1, DEC-256 item 5 slice 2)
+- `aec manifest build|check --trust-config [--root DIR]` build `telosmith.manifest/1.0` from the repository's own
+  `.aec/config.json` (new optional `manifest` section) and one fresh MCP 2026-07-28 session, or compare a fresh build
+  with the committed file by JSON path. Neither launches anything without `--trust-config`. Rules:
+  `docs/integrations/manifest-build.md`.
+
 ### Changed (CI, HO-AEC-20261123-ER2R, DEC-270 (7))
 - CI runs the tests on macOS and Windows (Python 3.12) as well as Linux (3.10-3.13). Each job writes its skipped
   tests, with their reasons, to the job summary, so what a platform doesn't run is stated by CI. The bash demo
