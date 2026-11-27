@@ -38,6 +38,9 @@ that runs):
   (Kate's `AEC-R-manifest-config-provenance@1`, proposed).
 - `authority` takes only `needs`, `accepts` and `grants`. Any other key is a config error: the manifest has no place
   for it, so it would otherwise vanish.
+  A key left out becomes `[]`, in `sockets.authority` and in the card's authority extension. A value that is given is
+  kept as given, so an invalid one (not a list of non-empty strings) fails the build rather than becoming `[]`
+  (`AEC-R-manifest-authority-defaults@1`).
 - `pass_env` names environment variables the server needs. Names only; their values are never written or shown.
 
 ## Where each field comes from

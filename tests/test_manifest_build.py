@@ -619,10 +619,52 @@ class Safety(Base):
                          {"needs": ["x.read"], "accepts": ["y.call"], "grants": ["z.do"]})
 
     def test_missing_authority_keys_default_to_empty_lists(self):
-        self.config(authority={"needs": ["x.read"]})
+        # AEC-R-manifest-authority-defaults@1 (Kate, round 18): each key omitted alone and all three together, in
+        # sockets.authority and in the card's extension, with distinct non-empty lists kept as supplied
+        given = {"needs": ["x.read"], "accepts": ["y.call"], "grants": ["z.do"]}
+        cases = [{k: v for k, v in given.items() if k != gone} for gone in ("needs", "accepts", "grants")] + [{}]
+        for supplied in cases:
+            self.config(authority=supplied, a2a={"url": "https://example.test/a2a"})
+            self.assertEqual(self.cmd("build")[0], 0, supplied)
+            m = self.written()
+            expected = {"needs": supplied.get("needs", []), "accepts": supplied.get("accepts", []),
+                        "grants": supplied.get("grants", [])}
+            self.assertEqual({k: m["sockets"]["authority"][k] for k in ("needs", "accepts", "grants")}, expected)
+            ext = m["sockets"]["a2a"]["agentCard"]["capabilities"]["extensions"]
+            self.assertEqual(len(ext), 1, supplied)
+            self.assertEqual({k: ext[0]["params"][k] for k in ("needs", "accepts", "grants")}, expected, supplied)
+
+    def test_explicit_invalid_authority_value_is_refused_not_defaulted(self):
+        # AEC-R-manifest-authority-defaults@1 (Kate, round 18): a supplied invalid value never becomes []
         self.assertEqual(self.cmd("build")[0], 0)
-        auth = self.written()["sockets"]["authority"]
-        self.assertEqual((auth["needs"], auth["accepts"], auth["grants"]), (["x.read"], [], []))
+        path = self.tmp / ".aec" / "manifest.json"
+        before = path.read_bytes()
+        for a2a_on in (False, True):
+            for bad in (None, "x.read", [""], [1], {}):
+                self.config(authority={"needs": bad, "accepts": [], "grants": []},
+                            a2a={"url": "https://example.test/a2a"} if a2a_on else None)
+                code, _, _ = self.cmd("build")
+                self.assertIn(code, (1, 2), (bad, a2a_on))
+                self.assertEqual(path.read_bytes(), before, (bad, a2a_on))
+                self.assertEqual(list((self.tmp / ".aec").glob("*.tmp")), [])
+        path.unlink()
+        self.config(authority={"needs": None, "accepts": [], "grants": []}, a2a=None)
+        self.assertIn(self.cmd("build")[0], (1, 2))
+        self.assertFalse(path.exists())
+
+    def test_config_refusals_never_enter_collection(self):
+        # AEC-R-manifest-config-provenance@1 "refusal occurs before collection" shown directly (Kate, round 18)
+        bad = [{"authority": {"needs": [], "accepts": [], "grants": [], "extra": []}}]
+        bad += [{"a2a": {"url": "https://example.test/a2a", k: "x"}}
+                for k in ("name", "description", "version", "authority", "no_such_card_argument")]
+        for over in bad:
+            self.config(authority={"needs": [], "accepts": [], "grants": []}, a2a=None)
+            self.config(**over)
+            for which in ("build", "check"):
+                with mock.patch.object(manifest_build, "collect") as collect:
+                    code, _, _ = self.cmd(which)
+                self.assertEqual(code, 2, (over, which))
+                collect.assert_not_called()
 
     def test_write_failure_reports_the_type_and_keeps_the_old_file(self):
         self.assertEqual(self.cmd("build")[0], 0)
