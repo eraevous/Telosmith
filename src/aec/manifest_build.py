@@ -163,9 +163,15 @@ class _Session:
         deadline = time.monotonic() + TIMEOUT_S  # one budget for the whole request: the write, notifications too
         data, failed = (json.dumps(msg) + "\n").encode("utf-8"), []
 
-        def write():
+        def write():  # raw (bufsize=0) writes can be short: loop until every byte is sent (Kate, round 16)
+            view = memoryview(data)
             try:
-                self.proc.stdin.write(data)
+                while view:
+                    n = self.proc.stdin.write(view)
+                    if not n:
+                        failed.append(True)
+                        return
+                    view = view[n:]
             except (OSError, ValueError):
                 failed.append(True)
         w = threading.Thread(target=write, daemon=True)  # a server that stops reading can't block us (Codex on #118)

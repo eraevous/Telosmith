@@ -262,6 +262,33 @@ class CollectionFailures(Base):
                 s.request("tools/list")
         self.assertEqual(s.lines.qsize(), 3)  # two read before the deadline passed, three left
 
+    def test_short_writes_send_the_whole_request(self):
+        s = object.__new__(manifest_build._Session)
+        s.proc, s.next_id, s.overrun = mock.Mock(), 0, None
+        sent = bytearray()
+
+        def short(view):  # at most 7 bytes per call, as a raw pipe may
+            sent.extend(bytes(view[:7]))
+            return min(7, len(view))
+        s.proc.stdin.write.side_effect = short
+        s.lines = manifest_build.queue.Queue()
+        s.lines.put(b'{"jsonrpc": "2.0", "id": 1, "result": {"resultType": "complete"}}\n')
+        s.request("tools/list")
+        self.assertEqual(json.loads(bytes(sent))["method"], "tools/list")
+        self.assertTrue(sent.endswith(b"\n"))
+
+    def test_reader_still_running_after_exit_fails_the_session(self):
+        s = object.__new__(manifest_build._Session)
+        s.proc, s.overrun = mock.Mock(), None
+        s.proc.poll.return_value = 0
+        s.reader = mock.Mock()
+        s.reader.is_alive.return_value = True  # a descendant outside the group still holds stdout
+        s.lines = manifest_build.queue.Queue()
+        with mock.patch.object(manifest_build.os, "killpg", create=True), \
+                self.assertRaises(manifest_build.CollectError) as cm:
+            s.finish()
+        self.assertIn("didn't close", str(cm.exception))
+
     def test_result_that_is_not_complete(self):
         self.assert_fails_without_writing(lists={"tools/list": [{"items": [TOOL]}]}, not_complete="tools/list")
 
@@ -526,11 +553,17 @@ class Safety(Base):
         self.assertFalse((self.tmp / "moved.json").exists())
 
     def test_unknown_authority_key_is_refused(self):
+        self.assertEqual(self.cmd("build")[0], 0)
+        path = self.tmp / ".aec" / "manifest.json"
+        before = path.read_bytes()
+        self.fake(lists={"tools/list": [{"items": [TOOL]}]}, dump_env=True)  # env_seen.json would show a launch
         self.config(authority={"needs": [], "accepts": [], "grants": [], "extra": []})
         for which in ("build", "check"):
             code, _, err = self.cmd(which)
             self.assertEqual(code, 2, which)
             self.assertIn("manifest.authority", err)
+            self.assertFalse((self.tmp / "env_seen.json").exists(), which)  # refused before launch (Kate, round 16)
+            self.assertEqual(path.read_bytes(), before, which)
 
     def test_a2a_fields_that_come_from_elsewhere_are_refused(self):
         # AEC-R-manifest-config-provenance@1 (Kate): build and check, before collection, bytes kept
@@ -550,15 +583,28 @@ class Safety(Base):
                 self.assertEqual(path.read_bytes(), before)
 
     def test_reserved_card_fields_come_from_their_sources(self):
+        # values that differ from the fixture defaults, so agreement can't pass for derivation (Kate, round 16)
+        self.fake(lists={"tools/list": [{"items": [TOOL]}]}, version="4.5.6")
         self.config(a2a={"url": "https://example.test/a2a"},
-                    authority={"needs": ["x.read"], "accepts": [], "grants": []})
+                    tool={"id": "other", "name": "Other Name", "description": "Another description."},
+                    authority={"needs": ["x.read"], "accepts": ["y.call"], "grants": ["z.do"]})
         self.assertEqual(self.cmd("build")[0], 0)
         m = self.written()
         card = m["sockets"]["a2a"]["agentCard"]
-        self.assertEqual((card["name"], card["description"], card["version"]), ("Fake", "A fake tool.", "1.2.3"))
+        self.assertEqual((card["name"], card["description"], card["version"]),
+                         ("Other Name", "Another description.", "4.5.6"))
         ext = card["capabilities"]["extensions"]
         self.assertEqual(len(ext), 1)
-        self.assertEqual(ext[0]["params"]["needs"], ["x.read"])
+        self.assertEqual({k: ext[0]["params"][k] for k in ("needs", "accepts", "grants")},
+                         {"needs": ["x.read"], "accepts": ["y.call"], "grants": ["z.do"]})
+        self.assertEqual({k: m["sockets"]["authority"][k] for k in ("needs", "accepts", "grants")},
+                         {"needs": ["x.read"], "accepts": ["y.call"], "grants": ["z.do"]})
+
+    def test_missing_authority_keys_default_to_empty_lists(self):
+        self.config(authority={"needs": ["x.read"]})
+        self.assertEqual(self.cmd("build")[0], 0)
+        auth = self.written()["sockets"]["authority"]
+        self.assertEqual((auth["needs"], auth["accepts"], auth["grants"]), (["x.read"], [], []))
 
     def test_write_failure_reports_the_type_and_keeps_the_old_file(self):
         self.assertEqual(self.cmd("build")[0], 0)
